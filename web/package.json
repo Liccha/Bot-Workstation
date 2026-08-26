@@ -1,0 +1,22 @@
+{
+  "name": "bot-editor-cloud-announcements",
+  "private": true,
+  "version": "1.0.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "preflight:announcements": "node scripts/preflight-announcements.mjs",
+    "migrate:announcements": "node scripts/migrate-announcements.mjs",
+    "migrate:website": "node scripts/migrate-website-posts.mjs",
+    "migrate:likes": "node scripts/migrate-likes.mjs",
+    "migrate:visits": "node scripts/migrate-visits.mjs",
+    "verify:announcements": "node scripts/verify-announcements.mjs",
+    "rollback:export": "node scripts/export-announcements.mjs",
+    "admin:hash": "node scripts/generate-admin-hash.mjs"
+  },
+  "dependencies": {
+    "ali-oss": "6.23.0"
+  }
+}

@@ -1,0 +1,70 @@
+# IDE and operating-system files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Java / Node / Flutter build output
+**/target/
+**/node_modules/
+**/.dart_tool/
+**/build/
+**/.gradle/
+**/ephemeral/
+**/.packages
+**/.flutter-plugins*
+**/coverage/
+**/test/failures/
+
+# Local SDK and signing configuration
+**/local.properties
+**/key.properties
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+
+# Secrets and environment overrides
+.env
+.env.*
+!.env.example
+*credentials*.properties
+*secret*.properties
+admin_password.txt
+admin_devices.json
+admin_blocked_ips.json
+
+# Production data and user content
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.csv
+*.xlsx
+*.xls
+*.mcz
+*.mp3
+*.wav
+*.ogg
+*.log
+announce_files/
+backups/
+logs/
+output/
+tmp/
+
+# Release binaries
+*.exe
+*.msi
+*.apk
+*.aab
+*.jar
+*.zip
+
+# Licensed production artwork/fonts are intentionally not public
+mczmaker/src/main/resources/素材/
+web/fonts/
+web/bg.png

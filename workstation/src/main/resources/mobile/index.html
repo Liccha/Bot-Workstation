@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#fff8fb">
+  <title>Bot 工作站</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.png">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <main class="shell">
+    <section id="pair" class="pair reveal">
+      <img class="brand-icon" src="/icon.png" width="72" height="72" alt="">
+      <h1>Bot 工作站</h1>
+      <p>输入电脑上显示的一次性配对码。</p>
+      <form id="pair-form">
+        <label for="pair-code">配对码</label>
+        <input id="pair-code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" required placeholder="000000">
+        <p id="pair-message" class="helper" aria-live="polite"></p>
+        <button class="primary" type="submit">连接工作站</button>
+      </form>
+    </section>
+
+    <section id="app" class="app" hidden>
+      <header class="topbar">
+        <div class="identity"><img src="/icon.png" width="42" height="42" alt=""><div><strong>Bot 工作站</strong><span id="connection">已配对</span></div></div>
+        <button id="refresh" class="icon-button" type="button" aria-label="刷新状态">↻</button>
+      </header>
+
+      <section id="overview" class="view active">
+        <div class="view-head reveal"><h1>运行总览</h1><p>状态与电脑端保持一致。</p></div>
+        <div class="service-grid">
+          <article class="service-card reveal delay-1"><div class="service-head"><h2>SongBot</h2><span id="songbot-state" class="state">检测中</span></div><p>群消息、公告调度、猜歌与接口服务</p><div class="actions"><button data-action="songbot.start">启用</button><button data-action="songbot.stop">停用</button></div></article>
+          <article class="service-card reveal delay-2"><div class="service-head"><h2>NapCat</h2><span id="napcat-state" class="state">检测中</span></div><p>QQ 连接与 OneBot 消息通道</p><div class="actions"><button data-action="napcat.start">启用</button><button data-action="napcat.stop">停用</button></div></article>
+        </div>
+      </section>
+
+      <section id="songs" class="view">
+        <div class="view-head"><h1>歌曲信息</h1><p>直接查询并保存 SongBot 曲库。</p></div>
+        <form id="song-search-form" class="searchbar">
+          <label class="sr-only" for="song-query">搜索歌曲</label>
+          <input id="song-query" type="search" placeholder="歌曲名、作者、谱师或 ID" autocomplete="off">
+          <button type="submit">搜索</button>
+        </form>
+        <p id="song-meta" class="result-meta" aria-live="polite"></p>
+        <div id="song-list" class="data-list" aria-live="polite"></div>
+      </section>
+
+      <section id="stable" class="view">
+        <div class="view-head"><h1>Stable 曲库</h1><p>查询并修改 stable_info.xlsx；保存时自动备份。</p></div>
+        <form id="stable-search-form" class="searchbar">
+          <label class="sr-only" for="stable-query">搜索 Stable 曲库</label>
+          <input id="stable-query" type="search" placeholder="曲名、作者或 SID" autocomplete="off">
+          <button type="submit">搜索</button>
+        </form>
+        <p id="stable-meta" class="result-meta" aria-live="polite"></p>
+        <div id="stable-list" class="data-list" aria-live="polite"></div>
+      </section>
+
+      <section id="more" class="view">
+        <div class="view-head"><h1>更多模块</h1><p>复杂编辑器会在工作站电脑内打开。</p></div>
+        <div class="module-list">
+          <button class="module" data-action="open.mcz"><span><strong>谱面录入与图片设计</strong><small>谱面、Combo、音频、波形与模板</small></span><b>电脑打开</b></button>
+          <button class="module" data-action="open.admin"><span><strong>公告及网站管理</strong><small>公告、附件与网站文章</small></span><b>电脑打开</b></button>
+          <button class="module" data-action="open.operations"><span><strong>运营中心</strong><small>每日推荐、竞猜与 Stable 抓取</small></span><b>电脑打开</b></button>
+          <a class="module" href="https://editor.teacharm.moe" rel="noreferrer"><span><strong>Editor 正式站</strong><small>打开歌曲查询与公开内容</small></span><b>前往</b></a>
+        </div>
+        <div id="update-card" class="settings-card update-card" hidden>
+          <div><strong id="update-title">发现新版本</strong><p id="update-notes"></p></div>
+          <button class="primary" type="button" data-action="update.install">一键更新电脑端</button>
+        </div>
+        <div class="settings-card compact"><p>连接令牌仅保存在这台手机。</p><button id="install" type="button" hidden>安装到桌面</button><button id="unpair" class="danger" type="button">解除本机配对</button></div>
+      </section>
+
+      <p id="toast" class="toast" role="status" aria-live="polite"></p>
+      <nav class="bottom-nav" aria-label="主要导航">
+        <button class="selected" data-view="overview">总览</button>
+        <button data-view="songs">歌曲</button>
+        <button data-view="stable">Stable</button>
+        <button data-view="more">更多</button>
+      </nav>
+    </section>
+  </main>
+
+  <dialog id="editor-dialog" class="editor-dialog">
+    <form id="editor-form" method="dialog">
+      <header><div><strong id="editor-title">编辑记录</strong><span id="editor-subtitle"></span></div><button id="editor-close" class="dialog-close" type="button" aria-label="关闭">×</button></header>
+      <div id="editor-fields" class="editor-fields"></div>
+      <p id="editor-message" class="helper" aria-live="polite"></p>
+      <footer><button id="editor-cancel" type="button">取消</button><button class="primary" type="submit">保存</button></footer>
+    </form>
+  </dialog>
+  <script src="/app.js" defer></script>
+</body>
+</html>

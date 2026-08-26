@@ -1,0 +1,16 @@
+/* Hallmark · motion tokens for the song library */
+:root {
+  --lib-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --lib-ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --lib-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --lib-duration-press: 100ms;
+  --lib-duration-state: 150ms;
+  --lib-duration-card-enter: 300ms;
+  --lib-card-stagger: 48ms;
+  --lib-duration-card-enter-ios: 380ms;
+  --lib-card-stagger-ios: 60ms;
+  --lib-duration-card-enter-reduced: 50ms;
+  --lib-card-stagger-reduced: 72ms;
+  --lib-focus-color: #2563eb;
+  --lib-focus-color: oklch(62% 0.19 255);
+}
