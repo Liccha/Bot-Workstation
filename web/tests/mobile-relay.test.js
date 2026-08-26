@@ -63,6 +63,30 @@ test('device request crosses networks, is executed once, and returns only to its
   assert.equal((await call('GET', 'result', { headers: { authorization: `Device ${other.body.token}` }, query: { id: submitted.body.id } })).status, 404);
 });
 
+test('completed requests release their slots after the device receives the result', async () => {
+  const registered = await call('POST', 'register-device', { headers: desktop, body: { name: '连续翻页设备' } });
+  const headers = { authorization: `Device ${registered.body.token}` };
+  for (let page = 0; page < 9; page++) {
+    const submitted = await call('POST', 'submit', { headers, body: {
+      method: 'GET', path: '/api/songs', query: { offset: String(page * 200), limit: '200' }
+    } });
+    assert.equal(submitted.status, 202, `第 ${page + 1} 次请求不应触发 rate limited`);
+    const polled = await call('GET', 'desktop-poll', { headers: desktop });
+    const work = polled.body.items.find(item => item.id === submitted.body.id);
+    assert.ok(work, `第 ${page + 1} 次请求应被电脑端取走`);
+    assert.equal((await call('POST', 'desktop-complete', { headers: desktop, body: {
+      id: work.id, claimToken: work.claimToken, status: 200, body: { items: [], total: 1257 }
+    } })).status, 200);
+    assert.equal((await call('GET', 'result', { headers, query: { id: submitted.body.id } })).status, 200);
+  }
+  const concurrent = await Promise.all([9, 10].map(page => call('POST', 'submit', { headers, body: {
+    method: 'GET', path: '/api/songs', query: { offset: String(page * 200), limit: '200' }
+  } })));
+  assert.deepEqual(concurrent.map(result => result.status), [202, 202]);
+  const polled = await call('GET', 'desktop-poll', { headers: desktop });
+  assert.deepEqual(new Set(polled.body.items.map(item => item.id)), new Set(concurrent.map(result => result.body.id)));
+});
+
 test('empty desktop poll does not take or wait for the queue lock', async () => {
   const lockKey = 'locks/mobile-relay-queue.json';
   await getStore().put(lockKey, Buffer.from(JSON.stringify({

@@ -10,6 +10,7 @@ const CLAIM_PREFIX = 'mobile-relay/claims/';
 const REQUEST_TTL_MS = 30 * 60 * 1000;
 const RESPONSE_TTL_MS = 60 * 60 * 1000;
 const CLAIM_MS = 15 * 60 * 1000;
+const RESULT_REUSE_GRACE_MS = 30 * 1000;
 const MAX_DEVICES = 50;
 const DEVICE_SLOTS = 8;
 
@@ -77,31 +78,41 @@ async function acquireClaim(id, inboxKey) {
   }
   return null;
 }
+async function readSlot(key) {
+  const object = await getStore().get(key);
+  if (!object) return { key, item: null };
+  const value = JSON.parse(object.body.toString('utf8'));
+  return { key, item: value && typeof value === 'object' ? value : null };
+}
 async function readSlots(deviceId) {
-  return Promise.all(Array.from({ length: DEVICE_SLOTS }, async (_, index) => {
-    const key = slotKey(deviceId, index);
-    return { key, item: await readJson(key, null) };
-  }));
+  return Promise.all(Array.from({ length: DEVICE_SLOTS }, (_, index) => readSlot(slotKey(deviceId, index))));
 }
 function expired(item) {
   return !item || Date.parse(item.expiresAt || 0) <= Date.now();
 }
+function reusable(item) {
+  if (expired(item)) return true;
+  if (item?.state !== 'complete') return false;
+  if (item.deliveredAt) return true;
+  return Date.parse(item.completedAt || 0) <= Date.now() - RESULT_REUSE_GRACE_MS;
+}
 async function placeInSlot(item) {
+  const bytes = Buffer.from(JSON.stringify(item));
   for (let index = 0; index < DEVICE_SLOTS; index++) {
     const key = slotKey(item.deviceId, index);
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        await getStore().put(key, Buffer.from(JSON.stringify(item)), { forbidOverwrite: true });
-        return true;
-      } catch (error) {
-        if (!objectExists(error)) throw error;
-        const existing = await readJson(key, null);
-        if (!expired(existing)) break;
-        await getStore().delete(key).catch(() => {});
-      }
+    try {
+      await getStore().put(key, bytes, { forbidOverwrite: true });
+      return true;
+    } catch (error) {
+      if (!objectExists(error)) throw error;
     }
   }
-  return false;
+  return repo.withLock(`mobile-relay-submit-${item.deviceId}`, async () => {
+    const available = (await readSlots(item.deviceId)).find(slot => reusable(slot.item));
+    if (!available) return false;
+    await getStore().put(available.key, bytes);
+    return true;
+  });
 }
 
 async function deviceFromRequest(req) {
@@ -232,8 +243,13 @@ module.exports = async function handler(req, res) {
     if (action === 'result' && req.method === 'GET') {
       const device = await deviceFromRequest(req); if (!device) throw unauthorized();
       const id = safeId(query(req, 'id')); if (!id) throw badRequest();
-      const record = (await readSlots(device.id)).map(slot => slot.item).find(item => item?.id === id);
+      const slot = (await readSlots(device.id)).find(candidate => candidate.item?.id === id);
+      const record = slot?.item;
       if (!record || expired(record)) throw notFound();
+      if (record.state === 'complete' && !record.deliveredAt) {
+        record.deliveredAt = now();
+        await getStore().put(slot.key, Buffer.from(JSON.stringify(record)));
+      }
       return json(res, record.state === 'complete' ? 200 : 202,
         record.state === 'complete' ? { id, state: 'complete', response: record.response } : { id, state: 'pending' });
     }
