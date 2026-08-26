@@ -11,29 +11,39 @@ import java.util.Map;
 
 /** Narrow JSON facade for the paired mobile client; database access stays transactional. */
 public final class MobileDataService {
-    private static final List<String> SONG_COLUMNS = java.util.Arrays.asList(
-        "id", "song_name", "author", "charter", "bpm", "duration", "album", "song_nickname");
+    private static final List<String> SONG_PRIORITY = java.util.Arrays.asList(
+        "song_name", "author", "charter", "bpm", "duration", "id",
+        "album", "album_ids", "album_date", "album_image_path",
+        "song_nickname", "song_nickname2", "song_nickname3", "song_nickname4",
+        "song_nickname5", "song_nickname6", "artist_nickname");
     private final SongLibraryRepository songs;
     private final StableRepository stable;
 
     public MobileDataService(BotPaths paths) { songs = new SongLibraryRepository(paths.songDatabase); stable = new StableRepository(paths); }
 
     public JSONObject songs(String query, int requestedLimit) throws Exception {
+        return songs(query, 0, requestedLimit);
+    }
+
+    public JSONObject songs(String query, int requestedOffset, int requestedLimit) throws Exception {
         SongLibraryRepository.Snapshot snapshot = songs.load();
-        int limit = Math.max(1, Math.min(100, requestedLimit));
+        int offset = Math.max(0, requestedOffset);
+        int limit = Math.max(1, Math.min(200, requestedLimit));
         String needle = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
         JSONArray result = new JSONArray();
+        int matched = 0;
         for (Map<String, String> row : snapshot.rows) {
             boolean matches = needle.isEmpty() || row.values().stream().anyMatch(value -> value.toLowerCase(Locale.ROOT).contains(needle));
             if (!matches) continue;
+            int matchIndex = matched++;
+            if (matchIndex < offset || result.length() >= limit) continue;
             JSONObject item = new JSONObject();
-            for (String expected : SONG_COLUMNS) {
-                String actual = snapshot.columns.stream().filter(column -> column.equalsIgnoreCase(expected)).findFirst().orElse(null);
-                if (actual != null) item.put(actual, row.getOrDefault(actual, ""));
-            }
-            result.put(item); if (result.length() >= limit) break;
+            for (String actual : orderedSongColumns(snapshot.columns)) item.put(actual, row.getOrDefault(actual, ""));
+            result.put(item);
         }
-        return new JSONObject().put("items", result).put("limit", limit).put("total", result.length());
+        int nextOffset = offset + result.length();
+        return new JSONObject().put("items", result).put("offset", offset).put("limit", limit)
+            .put("total", matched).put("hasMore", nextOffset < matched).put("nextOffset", nextOffset);
     }
 
     public void updateSong(String id, JSONObject inputValues) throws Exception {
@@ -42,20 +52,36 @@ public final class MobileDataService {
             .orElseThrow(() -> new IllegalStateException("歌曲表没有 id 字段"));
         Map<String, String> values = new LinkedHashMap<>();
         for (String key : inputValues.keySet()) {
-            if (SONG_COLUMNS.stream().noneMatch(allowed -> allowed.equalsIgnoreCase(key))) continue;
             String actual = snapshot.columns.stream().filter(column -> column.equalsIgnoreCase(key)).findFirst().orElse(null);
             if (actual != null && !actual.equalsIgnoreCase(idColumn)) values.put(actual, inputValues.optString(key, ""));
         }
         songs.update(idColumn, id, values);
     }
 
+    private static List<String> orderedSongColumns(List<String> actualColumns) {
+        java.util.ArrayList<String> ordered = new java.util.ArrayList<>();
+        for (String expected : SONG_PRIORITY) {
+            actualColumns.stream().filter(column -> column.equalsIgnoreCase(expected)).findFirst()
+                .ifPresent(column -> { if (!ordered.contains(column)) ordered.add(column); });
+        }
+        for (String column : actualColumns) if (!ordered.contains(column)) ordered.add(column);
+        return ordered;
+    }
+
     public JSONObject stable(String query, int requestedLimit) throws Exception {
+        return stable(query, 0, requestedLimit);
+    }
+
+    public JSONObject stable(String query, int requestedOffset, int requestedLimit) throws Exception {
         StableRepository.Snapshot snapshot = stable.load(); int limit = Math.max(1, Math.min(200, requestedLimit));
+        int offset = Math.max(0, requestedOffset);
         String needle = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
-        JSONArray items = new JSONArray();
+        JSONArray items = new JSONArray(); int matched = 0;
         for (int row = 0; row < snapshot.rows.size(); row++) {
             if (!needle.isEmpty() && snapshot.rows.get(row).stream()
                 .noneMatch(value -> value.toLowerCase(Locale.ROOT).contains(needle))) continue;
+            int matchIndex = matched++;
+            if (matchIndex < offset || items.length() >= limit) continue;
             JSONObject item = new JSONObject();
             for (int column = 0; column < snapshot.headers.size(); column++) {
                 String header = snapshot.headers.get(column);
@@ -64,9 +90,10 @@ public final class MobileDataService {
                 item.put(header, value);
             }
             items.put(item);
-            if (items.length() >= limit) break;
         }
-        return new JSONObject().put("items", items).put("total", items.length());
+        int nextOffset = offset + items.length();
+        return new JSONObject().put("items", items).put("offset", offset).put("limit", limit)
+            .put("total", matched).put("hasMore", nextOffset < matched).put("nextOffset", nextOffset);
     }
 
     public void updateStable(String sid, JSONObject inputValues) throws Exception {

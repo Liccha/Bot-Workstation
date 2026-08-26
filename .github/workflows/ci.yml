@@ -52,7 +52,7 @@ jobs:
           cache: true
       - run: flutter pub get
       - run: flutter analyze
-      - run: flutter test test/widget_test.dart
+      - run: flutter test
 
   public-tree:
     name: Sanitization guard

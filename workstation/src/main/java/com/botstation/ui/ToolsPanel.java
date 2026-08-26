@@ -11,6 +11,7 @@ import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 import java.awt.BorderLayout;
 import java.awt.Desktop;
+import java.awt.Dimension;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
@@ -34,20 +35,25 @@ final class ToolsPanel extends JPanel {
         addTool(grid, tool("Editor 正式网站", "打开面向用户的歌曲查询站，检查线上页面和公开内容。", "打开网站",
             () -> browse(paths.editorUrl)), 1, 0, .82, 1);
         addTool(grid, stableTool(paths.stableGrabber, tasks, log), 0, 1, 1, 2);
+        GridBagConstraints filler = new GridBagConstraints();
+        filler.gridx = 0; filler.gridy = 2; filler.gridwidth = 2;
+        filler.weightx = 1; filler.weighty = 1; filler.fill = GridBagConstraints.BOTH;
+        grid.add(new JPanel(), filler);
         body.add(grid); add(body, BorderLayout.CENTER);
     }
 
     private void addTool(JPanel grid, JPanel tool, int x, int y, double weight, int width) {
         GridBagConstraints constraints = new GridBagConstraints();
         constraints.gridx = x; constraints.gridy = y; constraints.gridwidth = width;
-        constraints.weightx = weight; constraints.weighty = y == 1 ? .7 : 1;
-        constraints.fill = GridBagConstraints.BOTH;
+        constraints.weightx = weight; constraints.weighty = 0;
+        constraints.fill = GridBagConstraints.HORIZONTAL; constraints.anchor = GridBagConstraints.NORTH;
         constraints.insets = new Insets(y == 0 ? 0 : 12, x == 0 ? 0 : 6, 0, x + width >= 2 ? 0 : 6);
         grid.add(tool, constraints);
     }
 
     private JPanel tool(String title, String detail, String action, Runnable runnable) {
         JPanel card = UiKit.card();
+        card.setPreferredSize(new Dimension(420, 176));
         javax.swing.JLabel heading = new javax.swing.JLabel(title); heading.setFont(DesignTokens.SECTION); heading.setForeground(DesignTokens.INK);
         card.add(heading, BorderLayout.NORTH); card.add(UiKit.muted(detail), BorderLayout.CENTER);
         JButton button = UiKit.primaryButton(action); button.addActionListener(event -> runnable.run());
@@ -56,6 +62,7 @@ final class ToolsPanel extends JPanel {
 
     private JPanel stableTool(java.nio.file.Path path, TaskRunner tasks, LogBus log) {
         JPanel card = UiKit.card();
+        card.setPreferredSize(new Dimension(860, 176));
         JLabel heading = new JLabel("RM Stable 抓取"); heading.setFont(DesignTokens.SECTION); heading.setForeground(DesignTokens.INK);
         JLabel detail = UiKit.muted("调用 rm_stable_info.exe；状态会持续显示，完成后可到 Stable 曲库检查并保存。");
         JLabel state = UiKit.muted("未启动");

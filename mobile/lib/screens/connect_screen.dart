@@ -57,30 +57,13 @@ class _ConnectScreenState extends State<ConnectScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
+                  SizedBox(
                     width: 58,
                     height: 58,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(18),
-                      gradient: const LinearGradient(
-                        colors: [AppTheme.accent, AppTheme.violet],
-                      ),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Color(0x35DA3D7B),
-                          blurRadius: 24,
-                          offset: Offset(0, 10),
-                        ),
-                      ],
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    child: Padding(
-                      padding: const EdgeInsets.all(7),
-                      child: Image.asset(
-                        'assets/app_icon.png',
-                        fit: BoxFit.contain,
-                        filterQuality: FilterQuality.high,
-                      ),
+                    child: Image.asset(
+                      'assets/app_icon.png',
+                      fit: BoxFit.contain,
+                      filterQuality: FilterQuality.high,
                     ),
                   ),
                   const SizedBox(height: 24),
@@ -90,7 +73,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '手机与电脑须连接同一个可互访的 Wi-Fi。请在电脑端打开“手机端”，启用服务后复制访问地址，并输入当前六位配对码。',
+                    '首次配对时，手机与电脑须连接同一个可互访的 Wi-Fi。请复制电脑端显示的实际地址并输入六位配对码；配对完成后会保存此设备的长期凭据。',
                     style: Theme.of(context).textTheme.bodyMedium
                         ?.copyWith(color: AppTheme.muted),
                   ),
@@ -106,7 +89,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
                             autocorrect: false,
                             decoration: const InputDecoration(
                               labelText: '电脑访问地址',
-                              hintText: 'http://192.168.1.8:8098/',
                               prefixIcon: Icon(Icons.lan_outlined),
                             ),
                           ),

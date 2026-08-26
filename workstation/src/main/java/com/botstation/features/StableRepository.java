@@ -4,6 +4,7 @@ import com.botstation.core.BotPaths;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellType;
 import org.apache.poi.ss.usermodel.DataFormatter;
+import org.apache.poi.ss.usermodel.DateUtil;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
@@ -47,7 +48,8 @@ final class StableRepository {
                 Row row = sheet.getRow(index); if (row == null) continue;
                 List<String> values = new ArrayList<>(); boolean any = false;
                 for (int column = 0; column < width; column++) {
-                    String value = formatter.formatCellValue(row.getCell(column)).trim(); values.add(value); any |= !value.isEmpty();
+                    String value = displayValue(row.getCell(column), headers.get(column), formatter);
+                    values.add(value); any |= !value.isEmpty();
                 }
                 if (any) rows.add(values);
             }
@@ -105,7 +107,7 @@ final class StableRepository {
                 for (int column = 0; column < headers.size(); column++) {
                     String desired = value(rows.get(rowIndex), column);
                     Cell cell = row.getCell(column); if (cell == null) cell = row.createCell(column);
-                    String current = formatter.formatCellValue(cell).trim();
+                    String current = displayValue(cell, headers.get(column), formatter);
                     if (desired.equals(current)) continue;
                     setCell(cell, headers.get(column), desired, rowIndex + 2);
                 }
@@ -162,6 +164,14 @@ final class StableRepository {
     private static void parseNumber(String text, String label, int row) {
         try { Double.parseDouble(text.trim()); }
         catch (Exception error) { throw new IllegalArgumentException("第 " + row + " 行" + label + "不是数字：" + text); }
+    }
+    static String displayValue(Cell cell, String header, DataFormatter formatter) {
+        if (cell == null) return "";
+        if ("update_time".equalsIgnoreCase(String.valueOf(header))
+            && cell.getCellType() == CellType.NUMERIC && DateUtil.isCellDateFormatted(cell)) {
+            return cell.getLocalDateTimeCellValue().toLocalDate().format(DateTimeFormatter.ISO_LOCAL_DATE);
+        }
+        return formatter.formatCellValue(cell).trim();
     }
     private static int indexIgnoreCase(List<String> values, String expected) {
         for (int i = 0; i < values.size(); i++) if (values.get(i).equalsIgnoreCase(expected)) return i;

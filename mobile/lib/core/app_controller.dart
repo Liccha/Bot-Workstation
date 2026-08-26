@@ -53,7 +53,14 @@ class AppController extends ChangeNotifier {
     WorkstationApi? next;
     try {
       next = WorkstationApi(server);
-      await next.pair(code.trim());
+      final paired = await next.pair(code.trim());
+      final remoteServer = paired['remoteServer']?.toString() ?? '';
+      final remoteToken = paired['remoteToken']?.toString() ?? '';
+      if (remoteServer.isNotEmpty && remoteToken.isNotEmpty) {
+        final local = next;
+        next = WorkstationApi(remoteServer, token: remoteToken);
+        local.close();
+      }
       await _store.save(next.server, next.token!);
       api?.close();
       api = next;

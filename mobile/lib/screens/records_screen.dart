@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../core/api_client.dart';
@@ -159,7 +161,8 @@ class _RecordCard extends StatelessWidget {
         ? [
             value(const ['author']),
             value(const ['charter']),
-            value(const ['bpm']),
+            if (value(const ['bpm']).isNotEmpty) 'BPM ${value(const ['bpm'])}',
+            value(const ['duration']),
           ].where((v) => v.isNotEmpty).join(' · ')
         : item.entries
               .where(
@@ -230,22 +233,57 @@ class _RecordEditorState extends State<_RecordEditor> {
   @override
   void initState() {
     super.initState();
-    final allowedSong = {
+    const songOrder = [
       'song_name',
       'author',
       'charter',
       'bpm',
       'duration',
       'album',
+      'album_ids',
+      'album_date',
+      'album_image_path',
       'song_nickname',
-    };
-    fields = {
-      for (final entry in widget.item.entries)
-        if (widget.type == RecordType.song
-            ? allowedSong.contains(entry.key.toLowerCase())
-            : !{'sid', 'id', 'cover'}.contains(entry.key.toLowerCase()))
-          entry.key: TextEditingController(text: entry.value?.toString() ?? ''),
-    };
+      'song_nickname2',
+      'song_nickname3',
+      'song_nickname4',
+      'song_nickname5',
+      'song_nickname6',
+      'artist_nickname',
+      'image_path',
+      'audio_path',
+    ];
+    final ordered = <String, TextEditingController>{};
+    if (widget.type == RecordType.song) {
+      for (final expected in songOrder) {
+        for (final entry in widget.item.entries) {
+          if (entry.key.toLowerCase() == expected) {
+            ordered[entry.key] = TextEditingController(
+              text: entry.value?.toString() ?? '',
+            );
+            break;
+          }
+        }
+      }
+      for (final entry in widget.item.entries) {
+        if (!ordered.keys.any(
+          (key) => key.toLowerCase() == entry.key.toLowerCase(),
+        )) {
+          ordered[entry.key] = TextEditingController(
+            text: entry.value?.toString() ?? '',
+          );
+        }
+      }
+    } else {
+      for (final entry in widget.item.entries) {
+        if (!{'sid', 'id', 'cover'}.contains(entry.key.toLowerCase())) {
+          ordered[entry.key] = TextEditingController(
+            text: entry.value?.toString() ?? '',
+          );
+        }
+      }
+    }
+    fields = ordered;
   }
 
   @override
@@ -276,6 +314,52 @@ class _RecordEditorState extends State<_RecordEditor> {
         await widget.api.updateStable(sidEntry.value.toString(), values);
       }
       if (mounted) Navigator.pop(context, true);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
+  Future<void> uploadAsset(String type) async {
+    final idEntry = widget.item.entries
+        .where((entry) => entry.key.toLowerCase() == 'id')
+        .firstOrNull;
+    if (idEntry == null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('这首歌曲缺少 ID')));
+      return;
+    }
+    final image = type == 'image';
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: image
+          ? const ['jpg', 'jpeg', 'png', 'webp']
+          : const ['mp3', 'wav', 'flac', 'm4a', 'ogg'],
+      withData: false,
+    );
+    if (picked == null || picked.files.isEmpty) return;
+    final file = picked.files.single;
+    setState(() => saving = true);
+    try {
+      final bytes = file.path != null
+          ? await File(file.path!).readAsBytes()
+          : file.bytes;
+      if (bytes == null || bytes.isEmpty) throw const ApiException('无法读取选择的文件');
+      await widget.api.uploadSongAsset(
+        id: idEntry.value.toString(),
+        type: type,
+        filename: file.name,
+        bytes: bytes,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(image ? '歌曲图片已压缩并发布' : '歌曲音频已压缩并发布')),
+        );
+      }
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -319,12 +403,37 @@ class _RecordEditorState extends State<_RecordEditor> {
               final entry = fields.entries.elementAt(index);
               return TextField(
                 controller: entry.value,
-                decoration: InputDecoration(labelText: entry.key),
+                readOnly: entry.key.toLowerCase() == 'id',
+                minLines: 1,
+                maxLines: entry.key.toLowerCase().contains('nickname') ? 3 : 1,
+                decoration: InputDecoration(labelText: _fieldLabel(entry.key)),
               );
             },
           ),
         ),
         const SizedBox(height: 14),
+        if (widget.type == RecordType.song) ...[
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: saving ? null : () => uploadAsset('image'),
+                  icon: const Icon(Icons.image_outlined),
+                  label: const Text('更换图片'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: saving ? null : () => uploadAsset('audio'),
+                  icon: const Icon(Icons.audio_file_outlined),
+                  label: const Text('更换音频'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+        ],
         SizedBox(
           width: double.infinity,
           child: FilledButton.icon(
@@ -341,6 +450,30 @@ class _RecordEditorState extends State<_RecordEditor> {
       ],
     ),
   );
+
+  String _fieldLabel(String key) {
+    const labels = {
+      'song_name': '歌名',
+      'author': '作者',
+      'charter': '谱师',
+      'bpm': 'BPM',
+      'duration': '时长',
+      'album': '专辑',
+      'album_ids': '专辑 ID',
+      'album_date': '收录日期',
+      'album_image_path': '专辑图片路径',
+      'song_nickname': '歌曲昵称 1',
+      'song_nickname2': '歌曲昵称 2',
+      'song_nickname3': '歌曲昵称 3',
+      'song_nickname4': '歌曲昵称 4',
+      'song_nickname5': '歌曲昵称 5',
+      'song_nickname6': '歌曲昵称 6',
+      'artist_nickname': '作者昵称',
+      'image_path': '歌曲图片路径',
+      'audio_path': '歌曲音频路径',
+    };
+    return labels[key.toLowerCase()] ?? key;
+  }
 }
 
 class _Message extends StatelessWidget {

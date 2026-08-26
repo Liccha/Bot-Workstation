@@ -12,6 +12,7 @@ import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
+import javax.swing.JFileChooser;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
@@ -21,6 +22,7 @@ import javax.swing.RowFilter;
 import javax.swing.SwingUtilities;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableRowSorter;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.BorderLayout;
 import java.awt.Dialog;
 import java.awt.Dimension;
@@ -28,6 +30,7 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.awt.Window;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -36,10 +39,13 @@ import java.util.regex.Pattern;
 
 public final class SongLibraryPanel extends JPanel {
     private static final List<String> PRIORITY = java.util.Arrays.asList(
-        "id", "song_name", "author", "charter", "bpm", "duration", "album", "song_nickname");
+        "song_name", "author", "charter", "bpm", "duration", "id", "album", "album_ids",
+        "album_date", "album_image_path", "song_nickname", "song_nickname2", "song_nickname3",
+        "song_nickname4", "song_nickname5", "song_nickname6", "artist_nickname");
     private final SongLibraryRepository repository;
     private final LogBus log;
     private final TaskRunner tasks;
+    private final SongAssetService assets;
     private final JTable table = new JTable();
     private final JTextField search = UiKit.field(28);
     private final JLabel count = UiKit.muted("尚未加载");
@@ -49,6 +55,7 @@ public final class SongLibraryPanel extends JPanel {
     public SongLibraryPanel(BotPaths paths, LogBus log, TaskRunner tasks) {
         super(new BorderLayout(0, 18));
         this.repository = new SongLibraryRepository(paths.songDatabase); this.log = log; this.tasks = tasks;
+        this.assets = new SongAssetService(paths, log);
         setBackground(DesignTokens.PAPER); setBorder(BorderFactory.createEmptyBorder(24, 26, 20, 26));
         JButton reload = UiKit.button("重新读取"); reload.addActionListener(event -> reload());
         add(UiKit.pageHeader("歌曲信息", "点击保存修改，将直接提交至Bot", reload), BorderLayout.NORTH);
@@ -116,8 +123,11 @@ public final class SongLibraryPanel extends JPanel {
         form.setBorder(BorderFactory.createEmptyBorder(14, 18, 14, 18));
         Map<String, JTextField> fields = new LinkedHashMap<>();
         String idColumn = findColumn("id") == null ? snapshot.columns.get(0) : findColumn("id");
+        List<String> editorColumns = new ArrayList<>();
+        for (String name : PRIORITY) if (findColumn(name) != null && !editorColumns.contains(findColumn(name))) editorColumns.add(findColumn(name));
+        for (String column : snapshot.columns) if (!editorColumns.contains(column)) editorColumns.add(column);
         int row = 0;
-        for (String column : snapshot.columns) {
+        for (String column : editorColumns) {
             GridBagConstraints labelConstraints = new GridBagConstraints();
             labelConstraints.gridx = 0; labelConstraints.gridy = row; labelConstraints.anchor = GridBagConstraints.WEST;
             labelConstraints.insets = new Insets(5, 0, 5, 12);
@@ -130,6 +140,10 @@ public final class SongLibraryPanel extends JPanel {
         }
         JScrollPane scroll = new JScrollPane(form); scroll.setBorder(null); scroll.getVerticalScrollBar().setUnitIncrement(18);
         JButton cancel = UiKit.button("取消"); cancel.addActionListener(event -> dialog.dispose());
+        JButton cover = UiKit.button("更换歌曲图片");
+        JButton audio = UiKit.button("更换歌曲音频");
+        cover.addActionListener(event -> selectAsset(dialog, selected.get(idColumn), "image", cover, audio));
+        audio.addActionListener(event -> selectAsset(dialog, selected.get(idColumn), "audio", cover, audio));
         JButton save = UiKit.primaryButton("保存修改");
         save.addActionListener(event -> {
             Map<String, String> values = new LinkedHashMap<>(); fields.forEach((key, field) -> values.put(key, field.getText()));
@@ -139,9 +153,28 @@ public final class SongLibraryPanel extends JPanel {
                 dialog.dispose(); reload();
             }, error -> { save.setEnabled(true); showError("保存失败，数据库没有发生部分写入", error); });
         });
-        JPanel buttons = UiKit.flow(cancel, save); buttons.setBorder(BorderFactory.createEmptyBorder(10, 16, 12, 16));
+        JPanel buttons = UiKit.flow(cover, audio, Box.createHorizontalStrut(12), cancel, save); buttons.setBorder(BorderFactory.createEmptyBorder(10, 16, 12, 16));
         dialog.add(scroll, BorderLayout.CENTER); dialog.add(buttons, BorderLayout.SOUTH);
         dialog.setSize(new Dimension(700, 720)); dialog.setLocationRelativeTo(owner); dialog.setVisible(true);
+    }
+
+    private void selectAsset(JDialog dialog, String id, String type, JButton cover, JButton audio) {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("image".equals(type) ? "选择歌曲图片" : "选择歌曲音频");
+        chooser.setFileFilter("image".equals(type)
+            ? new FileNameExtensionFilter("图片（JPG、PNG、WebP）", "jpg", "jpeg", "png", "webp")
+            : new FileNameExtensionFilter("音频（MP3、WAV、FLAC、M4A、OGG）", "mp3", "wav", "flac", "m4a", "ogg"));
+        if (chooser.showOpenDialog(dialog) != JFileChooser.APPROVE_OPTION) return;
+        Path selected = chooser.getSelectedFile().toPath(); cover.setEnabled(false); audio.setEnabled(false);
+        String original = "image".equals(type) ? "更换歌曲图片" : "更换歌曲音频";
+        JButton active = "image".equals(type) ? cover : audio; active.setText("正在压缩并发布…");
+        tasks.run(() -> assets.publish(id, type, selected), saved -> {
+            active.setText(original); cover.setEnabled(true); audio.setEnabled(true);
+            JOptionPane.showMessageDialog(dialog, "资源已压缩并发布，原歌曲 ID 不变。", "发布完成", JOptionPane.INFORMATION_MESSAGE);
+            dialog.dispose(); reload();
+        }, error -> {
+            active.setText(original); cover.setEnabled(true); audio.setEnabled(true); showError("资源发布失败，原文件已恢复", error);
+        });
     }
 
     private void setBusy(boolean busy, String text) { search.setEnabled(!busy); table.setEnabled(!busy); count.setText(text); }

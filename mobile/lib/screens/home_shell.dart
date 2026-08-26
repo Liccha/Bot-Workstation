@@ -14,8 +14,44 @@ class HomeShell extends StatefulWidget {
   State<HomeShell> createState() => _HomeShellState();
 }
 
-class _HomeShellState extends State<HomeShell> {
+class _HomeShellState extends State<HomeShell>
+    with SingleTickerProviderStateMixin {
   int index = 0;
+  late final AnimationController refreshAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    refreshAnimation = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 620),
+    );
+  }
+
+  @override
+  void dispose() {
+    refreshAnimation.dispose();
+    super.dispose();
+  }
+
+  Future<void> refreshWithFeedback() async {
+    refreshAnimation.repeat();
+    try {
+      await widget.controller.refresh();
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('状态已刷新')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    } finally {
+      refreshAnimation.stop();
+      refreshAnimation.value = 0;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -39,10 +75,11 @@ class _HomeShellState extends State<HomeShell> {
           if (index == 0)
             IconButton(
               tooltip: '刷新',
-              onPressed: widget.controller.busy
-                  ? null
-                  : () => widget.controller.refresh(),
-              icon: const Icon(Icons.refresh_rounded),
+              onPressed: widget.controller.busy ? null : refreshWithFeedback,
+              icon: RotationTransition(
+                turns: refreshAnimation,
+                child: const Icon(Icons.refresh_rounded),
+              ),
             ),
           const SizedBox(width: 8),
         ],

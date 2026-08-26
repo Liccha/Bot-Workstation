@@ -5,6 +5,7 @@ import com.botstation.core.LogBus;
 import com.botstation.core.ProcessSupervisor;
 import com.botstation.core.UpdateService;
 import com.botstation.features.MobileDataService;
+import com.botstation.features.SongAssetService;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -19,7 +20,10 @@ import java.io.OutputStream;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.HttpURLConnection;
 import java.net.NetworkInterface;
+import java.net.URI;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -32,6 +36,7 @@ import java.util.Collections;
 import java.util.Deque;
 import java.util.Enumeration;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -49,12 +54,15 @@ public final class MobileControlServer implements AutoCloseable {
     private final UpdateService updates;
     private final Consumer<String> openModule;
     private final MobileDataService data;
+    private final SongAssetService songAssets;
+    private final CloudMobileRelay relay;
     private final Map<String, Deque<Long>> pairAttempts = new ConcurrentHashMap<>();
     private HttpServer server;
     private ExecutorService executor;
     private byte[] secret;
     private String pairCode;
     private final AtomicBoolean updating = new AtomicBoolean();
+    private final int port = Integer.getInteger("botstation.mobile.port", PORT);
 
     public MobileControlServer(BotPaths paths, LogBus log, ProcessSupervisor services, Consumer<String> openModule) {
         this(paths, log, services, new UpdateService(paths, log), openModule);
@@ -65,6 +73,14 @@ public final class MobileControlServer implements AutoCloseable {
         this.paths = paths; this.log = log; this.services = services; this.openModule = openModule;
         this.updates = updates;
         this.data = new MobileDataService(paths);
+        this.songAssets = new SongAssetService(paths, log);
+        CloudMobileRelay configured = null;
+        try {
+            configured = CloudMobileRelay.fromSongBot(paths, log);
+        } catch (Exception error) {
+            log.warn("手机端", "跨网络设备服务配置无效：" + safeMessage(error));
+        }
+        this.relay = configured;
     }
 
     public synchronized void start() throws IOException {
@@ -72,7 +88,7 @@ public final class MobileControlServer implements AutoCloseable {
         secret = loadOrCreateSecret();
         pairCode = String.format("%06d", RANDOM.nextInt(1_000_000));
         String bindAddress = System.getProperty("botstation.mobile.bind", "0.0.0.0");
-        server = HttpServer.create(new InetSocketAddress(bindAddress, PORT), 32);
+        server = HttpServer.create(new InetSocketAddress(bindAddress, port), 32);
         server.createContext("/api/ping", this::ping);
         server.createContext("/api/pair", this::pair);
         server.createContext("/api/status", this::status);
@@ -80,20 +96,22 @@ public final class MobileControlServer implements AutoCloseable {
         server.createContext("/api/action", this::action);
         server.createContext("/api/songs", this::songs);
         server.createContext("/api/song", this::song);
+        server.createContext("/api/song-asset", this::songAsset);
         server.createContext("/api/stable", this::stable);
         server.createContext("/", this::staticFile);
         executor = Executors.newFixedThreadPool(4, task -> {
             Thread thread = new Thread(task, "bot-mobile-control"); thread.setDaemon(true); return thread;
         });
         server.setExecutor(executor); server.start();
-        log.info("手机端", "局域网控制已启用，端口 " + PORT);
+        if (relay != null) relay.start(this::executeRelay);
+        log.info("手机端", "局域网控制已启用，端口 " + port);
     }
 
     public synchronized boolean isRunning() { return server != null; }
     public synchronized String pairCode() { return pairCode == null ? "------" : pairCode; }
     public String localUrl() {
         String bindAddress = System.getProperty("botstation.mobile.bind", "0.0.0.0");
-        return "http://" + ("127.0.0.1".equals(bindAddress) ? bindAddress : localAddress()) + ":" + PORT + "/";
+        return "http://" + ("127.0.0.1".equals(bindAddress) ? bindAddress : localAddress()) + ":" + port + "/";
     }
 
     private void ping(HttpExchange exchange) throws IOException {
@@ -114,8 +132,35 @@ public final class MobileControlServer implements AutoCloseable {
             log.warn("手机端", "来自 " + ip + " 的配对码不正确");
             respond(exchange, 401, jsonError("配对码不正确")); return;
         }
-        log.info("手机端", "设备 " + ip + " 配对成功");
-        respond(exchange, 200, new JSONObject().put("token", issueToken()).put("expiresIn", TOKEN_SECONDS).toString());
+        JSONObject response = new JSONObject().put("token", issueToken()).put("expiresIn", TOKEN_SECONDS);
+        if (relay != null) {
+            try {
+                JSONObject device = relay.registerDevice(input.optString("name", "手机设备"));
+                response.put("remoteServer", relay.endpoint())
+                    .put("remoteToken", device.getString("token"))
+                    .put("deviceId", device.getString("id"));
+            } catch (Exception error) {
+                log.warn("手机端", "设备 " + ip + " 的云端账号创建失败：" + safeMessage(error));
+                respond(exchange, 503, jsonError("跨网络设备账号暂时无法创建，请稍后重试")); return;
+            }
+        }
+        log.info("手机端", "设备 " + ip + " 配对成功" + (relay == null ? "（仅局域网）" : "（已创建长期设备账号）"));
+        respond(exchange, 200, response.toString());
+    }
+
+    public boolean cloudRelayConfigured() { return relay != null; }
+    public java.util.List<JSONObject> cloudDevices() throws IOException {
+        java.util.List<JSONObject> values = new java.util.ArrayList<>();
+        if (relay == null) return values;
+        for (CloudMobileRelay.Device device : relay.devices()) {
+            values.add(new JSONObject().put("id", device.id).put("name", device.name)
+                .put("status", device.status).put("createdAt", device.createdAt));
+        }
+        return values;
+    }
+    public void revokeCloudDevice(String id) throws IOException {
+        if (relay == null) throw new IOException("跨网络设备服务未配置");
+        relay.revoke(id);
     }
 
     private void status(HttpExchange exchange) throws IOException {
@@ -187,8 +232,9 @@ public final class MobileControlServer implements AutoCloseable {
         if (!authorized(exchange)) { respond(exchange, 401, jsonError("请先配对")); return; }
         if (!"GET".equals(exchange.getRequestMethod())) { respond(exchange, 405, jsonError("仅支持 GET")); return; }
         try {
-            Map<String, String> query = query(exchange); int limit = parseInt(query.get("limit"), 60);
-            respond(exchange, 200, data.songs(query.getOrDefault("q", ""), limit).toString());
+            Map<String, String> query = query(exchange); int limit = parseInt(query.get("limit"), 100);
+            int offset = parseInt(query.get("offset"), 0);
+            respond(exchange, 200, data.songs(query.getOrDefault("q", ""), offset, limit).toString());
         } catch (Exception error) { respond(exchange, 500, jsonError(error.getMessage())); }
     }
 
@@ -209,7 +255,7 @@ public final class MobileControlServer implements AutoCloseable {
         try {
             if ("GET".equals(exchange.getRequestMethod())) {
                 Map<String, String> query = query(exchange);
-                respond(exchange, 200, data.stable(query.getOrDefault("q", ""), parseInt(query.get("limit"), 100)).toString());
+                respond(exchange, 200, data.stable(query.getOrDefault("q", ""), parseInt(query.get("offset"), 0), parseInt(query.get("limit"), 100)).toString());
                 return;
             }
             if ("POST".equals(exchange.getRequestMethod())) {
@@ -222,6 +268,22 @@ public final class MobileControlServer implements AutoCloseable {
             }
             respond(exchange, 405, jsonError("仅支持 GET 或 POST"));
         } catch (Exception error) { respond(exchange, 400, jsonError(error.getMessage())); }
+    }
+
+    private void songAsset(HttpExchange exchange) throws IOException {
+        if (!authorized(exchange)) { respond(exchange, 401, jsonError("请先配对")); return; }
+        if (!"POST".equals(exchange.getRequestMethod())) { respond(exchange, 405, jsonError("仅支持 POST")); return; }
+        try {
+            JSONObject input = bodyJson(exchange);
+            String id = input.optString("id", "").trim(); String type = input.optString("type", "").trim();
+            String name = input.optString("name", "").trim(); long size = input.optLong("size", -1);
+            URI download = URI.create(input.optString("downloadUrl", ""));
+            Path saved = songAssets.downloadAndPublish(id, type, download, name, size);
+            respond(exchange, 200, new JSONObject().put("ok", true).put("path", saved.toString()).toString());
+        } catch (Exception error) {
+            log.error("歌曲资源", "手机端上传失败：" + safeMessage(error));
+            respond(exchange, 400, jsonError(safeMessage(error)));
+        }
     }
 
     private void staticFile(HttpExchange exchange) throws IOException {
@@ -240,6 +302,50 @@ public final class MobileControlServer implements AutoCloseable {
             exchange.sendResponseHeaders(200, bytes.length);
             try (OutputStream output = exchange.getResponseBody()) { output.write(bytes); }
         }
+    }
+
+    private CloudMobileRelay.RelayResponse executeRelay(JSONObject payload) throws Exception {
+        String method = payload.optString("method", "").toUpperCase(java.util.Locale.ROOT);
+        String path = payload.optString("path", "");
+        String key = method + " " + path;
+        Set<String> allowed = Set.of("GET /api/status", "GET /api/update", "GET /api/songs", "GET /api/stable",
+            "POST /api/song", "POST /api/stable", "POST /api/action", "POST /api/song-asset");
+        if (!allowed.contains(key)) return new CloudMobileRelay.RelayResponse(400, new JSONObject().put("error", "未知操作"));
+        JSONObject body = payload.optJSONObject("body");
+        if ("POST /api/action".equals(key)) {
+            String actionName = body == null ? "" : body.optString("action", "");
+            if (!Set.of("songbot.start", "songbot.stop", "napcat.start", "napcat.stop", "update.install").contains(actionName))
+                return new CloudMobileRelay.RelayResponse(400, new JSONObject().put("error", "未知操作"));
+        }
+        StringBuilder url = new StringBuilder("http://127.0.0.1:").append(port).append(path);
+        JSONObject query = payload.optJSONObject("query");
+        if (query != null && !query.isEmpty()) {
+            boolean first = true;
+            for (String name : query.keySet()) {
+                String value = query.optString(name, "");
+                url.append(first ? '?' : '&'); first = false;
+                url.append(URLEncoder.encode(name, StandardCharsets.UTF_8.name())).append('=')
+                    .append(URLEncoder.encode(value, StandardCharsets.UTF_8.name()));
+            }
+        }
+        HttpURLConnection connection = (HttpURLConnection) URI.create(url.toString()).toURL().openConnection();
+        connection.setInstanceFollowRedirects(false); connection.setConnectTimeout(3000); connection.setReadTimeout(30 * 60_000);
+        connection.setRequestMethod(method); connection.setRequestProperty("Accept", "application/json");
+        connection.setRequestProperty("Authorization", "Bearer " + issueToken());
+        if ("POST".equals(method)) {
+            byte[] bytes = (body == null ? new JSONObject() : body).toString().getBytes(StandardCharsets.UTF_8);
+            connection.setDoOutput(true); connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            connection.setFixedLengthStreamingMode(bytes.length);
+            try (OutputStream output = connection.getOutputStream()) { output.write(bytes); }
+        }
+        int status = connection.getResponseCode();
+        InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+        String text = stream == null ? "" : new String(readAll(stream, 2 * 1024 * 1024), StandardCharsets.UTF_8);
+        connection.disconnect();
+        JSONObject response;
+        try { response = text.isBlank() ? new JSONObject() : new JSONObject(text); }
+        catch (Exception error) { response = new JSONObject().put("error", "工作站返回了无效数据"); status = 500; }
+        return new CloudMobileRelay.RelayResponse(status, response);
     }
 
     private boolean authorized(HttpExchange exchange) {
@@ -319,6 +425,11 @@ public final class MobileControlServer implements AutoCloseable {
     }
 
     private static String jsonError(String message) { return new JSONObject().put("error", message == null ? "操作失败" : message).toString(); }
+    private static String safeMessage(Throwable error) {
+        String value = error == null ? "操作失败" : String.valueOf(error.getMessage());
+        value = value.replaceAll("[\\r\\n]", " ");
+        return value.isBlank() ? "操作失败" : value.substring(0, Math.min(240, value.length()));
+    }
     private static void securityHeaders(Headers headers) {
         headers.set("X-Content-Type-Options", "nosniff"); headers.set("X-Frame-Options", "DENY");
         headers.set("Referrer-Policy", "no-referrer");
@@ -356,6 +467,7 @@ public final class MobileControlServer implements AutoCloseable {
     }
 
     @Override public synchronized void close() {
+        if (relay != null) relay.close();
         if (server != null) server.stop(0);
         if (executor != null) executor.shutdownNow();
         server = null; executor = null; pairCode = null;

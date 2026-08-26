@@ -14,6 +14,7 @@ class AppTheme {
     );
     return ThemeData(
       useMaterial3: true,
+      fontFamily: 'OppoSans',
       colorScheme: scheme,
       scaffoldBackgroundColor: Colors.transparent,
       textTheme: const TextTheme(

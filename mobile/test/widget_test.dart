@@ -37,31 +37,80 @@ void main() {
         );
       }
     });
+
+    test('accepts only the two fixed HTTPS relay endpoints', () {
+      expect(
+        WorkstationApi.normalizeServer(
+          'https://editor.teacharm.moe/api/mobile-relay',
+        ),
+        'https://editor.teacharm.moe/api/mobile-relay',
+      );
+      expect(
+        () => WorkstationApi.normalizeServer(
+          'https://editor.teacharm.moe/api/announcement-cloud',
+        ),
+        throwsA(isA<ApiException>()),
+      );
+    });
   });
 
-  test('pairing preflights the LAN endpoint and normalizes the displayed code', () async {
-    final paths = <String>[];
+  test('long-term device token relays a request without LAN access', () async {
+    final requests = <http.Request>[];
     final api = WorkstationApi(
-      '192.168.1.8',
+      'https://editor.teacharm.moe/api/mobile-relay',
+      token: 'device-id.device-secret',
       client: MockClient((request) async {
-        paths.add(request.url.path);
-        if (request.url.path == '/api/ping') {
-          return http.Response('{"ok":true,"pairing":true}', 200);
+        requests.add(request);
+        expect(
+          request.headers['authorization'],
+          'Device device-id.device-secret',
+        );
+        if (request.url.queryParameters['action'] == 'submit') {
+          expect(request.body, contains('/api/status'));
+          return http.Response('{"id":"request-id","state":"pending"}', 202);
         }
-        expect(request.body, contains('123456'));
-        return http.Response('{"token":"paired-token"}', 200);
+        return http.Response(
+          '{"id":"request-id","state":"complete","response":{"status":200,"body":{"songBot":"running"}}}',
+          200,
+        );
       }),
     );
-    await api.pair('12 34 56');
-    expect(paths, ['/api/ping', '/api/pair']);
-    expect(api.token, 'paired-token');
+    expect((await api.status())['songBot'], 'running');
+    expect(requests.length, 2);
   });
+
+  test(
+    'pairing preflights the LAN endpoint and normalizes the displayed code',
+    () async {
+      final paths = <String>[];
+      final api = WorkstationApi(
+        '192.168.1.8',
+        client: MockClient((request) async {
+          paths.add(request.url.path);
+          if (request.url.path == '/api/ping') {
+            return http.Response('{"ok":true,"pairing":true}', 200);
+          }
+          expect(request.body, contains('123456'));
+          return http.Response('{"token":"paired-token"}', 200);
+        }),
+      );
+      await api.pair('12 34 56');
+      expect(paths, ['/api/ping', '/api/pair']);
+      expect(api.token, 'paired-token');
+    },
+  );
 
   group('MobileUpdateService.compareVersions', () {
     test('detects only genuinely newer versions', () {
-      expect(MobileUpdateService.compareVersions('1.0.2', '1.0.1'), greaterThan(0));
+      expect(
+        MobileUpdateService.compareVersions('1.0.2', '1.0.1'),
+        greaterThan(0),
+      );
       expect(MobileUpdateService.compareVersions('1.0.2', '1.0.2'), 0);
-      expect(MobileUpdateService.compareVersions('1.0.1', '1.0.2'), lessThan(0));
+      expect(
+        MobileUpdateService.compareVersions('1.0.1', '1.0.2'),
+        lessThan(0),
+      );
     });
   });
 

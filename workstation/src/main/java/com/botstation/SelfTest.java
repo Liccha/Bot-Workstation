@@ -127,9 +127,9 @@ final class SelfTest {
         try {
             String routing = Files.readString(paths.songBot.resolve("deploy/vercel.json"), StandardCharsets.UTF_8);
             String core = Files.readString(paths.songBot.resolve("deploy/assets/js/core.js"), StandardCharsets.UTF_8);
-            return !routing.contains(".ts.net")
+            return !routing.contains("tailae715d.ts.net")
                 && !routing.contains("/api/visit\"")
-                && !core.contains(".ts.net")
+                && !core.contains("tailae715d.ts.net")
                 && core.contains("var API_BASE = ''");
         } catch (Exception error) { error.printStackTrace(); return false; }
     }

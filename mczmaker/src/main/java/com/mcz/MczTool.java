@@ -1222,15 +1222,15 @@ public class MczTool extends JFrame {
         infoPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 30)); // 强行压紧垂直高度
 
         infoPanel.add(Box.createHorizontalGlue());
-        infoPanel.add(new CapsuleLabel("歌曲: ", songName, new Color(225, 240, 255), new Color(0, 80, 160)));
+        infoPanel.add(new CapsuleLabel("歌曲: ", songName, new Color(225, 240, 255), new Color(0, 80, 160), false, true));
         infoPanel.add(Box.createHorizontalStrut(8));
-        infoPanel.add(new CapsuleLabel("作者: ", currentInfo.get("artist"), new Color(230, 250, 230), new Color(0, 100, 0)));
+        infoPanel.add(new CapsuleLabel("作者: ", currentInfo.get("artist"), new Color(230, 250, 230), new Color(0, 100, 0), false, true));
         infoPanel.add(Box.createHorizontalStrut(8));
-        infoPanel.add(new CapsuleLabel("谱师: ", String.join("、", charterSet), new Color(255, 240, 225), new Color(150, 70, 0)));
+        infoPanel.add(new CapsuleLabel("谱师: ", String.join("、", charterSet), new Color(255, 240, 225), new Color(150, 70, 0), false, true));
         infoPanel.add(Box.createHorizontalStrut(8));
-        infoPanel.add(new CapsuleLabel("BPM: ", bpmStr, new Color(245, 230, 255), new Color(100, 0, 150)));
+        infoPanel.add(new CapsuleLabel("BPM: ", bpmStr, new Color(245, 230, 255), new Color(100, 0, 150), false, true));
         infoPanel.add(Box.createHorizontalStrut(8));
-        infoPanel.add(new CapsuleLabel("时长: ", currentDuration, new Color(255, 235, 235), new Color(150, 0, 0)));
+        infoPanel.add(new CapsuleLabel("时长: ", currentDuration, new Color(255, 235, 235), new Color(150, 0, 0), false, true));
         infoPanel.add(Box.createHorizontalGlue());
 
         resultPanel.add(infoPanel);

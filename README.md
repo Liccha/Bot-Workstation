@@ -7,8 +7,9 @@
 ## 项目亮点
 
 - **一站式桌面工作台**：在 Java 桌面端统一管理 SongBot、NapCat、谱面工具、曲库、Stable 数据与运营入口。
-- **跨端控制**：Flutter Android App 通过局域网一次性配对码连接桌面端，可查询和事务化修改歌曲/Stable 元数据。
-- **可靠数据写入**：SQLite WAL、事务提交、写前备份、失败回滚、空数据防覆盖和非连续 ID 兼容。
+- **跨端控制**：Flutter Android App 首次在局域网用一次性配对码注册可撤销设备账户，之后可通过受限云中继跨网络查询和修改歌曲/Stable 元数据。
+- **可靠数据写入**：SQLite WAL、CSV 与数据库双写、事务提交、写前备份、失败回滚、空数据防覆盖和非连续 ID 兼容。
+- **低成本查询**：QQ群 `!ID/关键词` 查询始终命中本机 SQLite；CSV 只在启动时导入，不按消息请求云端资源。
 - **云端公告链路**：Vercel Serverless API + 阿里云 OSS/CDN，支持附件、版本冲突检测、并发锁、任务认领、失败重试和审计记录。
 - **纵深安全边界**：HttpOnly 管理员会话、HMAC 能力令牌、配对限速、请求体限制、路径校验与紧急写入阻断。
 - **可发布交付**：Windows EXE/Setup、签名 Android APK、SHA-256 发布清单和启动前更新检查。
@@ -17,7 +18,9 @@
 
 ```mermaid
 flowchart LR
-    Mobile[Flutter Android App] -->|LAN pairing + HMAC token| Workstation[Java Bot 工作站]
+    Mobile[Flutter Android App] -->|first-time LAN pairing| Workstation[Java Bot 工作站]
+    Mobile -->|revocable device token| Relay[Strict cloud relay]
+    Relay -->|outbound polling| Workstation
     Workstation --> MCZ[MCZ 制作与图片设计]
     Workstation --> SQLite[(SQLite / WAL)]
     Workstation --> Stable[XLSX / CSV / Stable]
@@ -38,7 +41,7 @@ flowchart LR
 | --- | --- |
 | `mczmaker/` | 谱面录入、Combo/BPM、音频波形、封面与日历图设计 |
 | `songbot/` | QQ 机器人、歌曲查询、Stable、公告执行与数据库服务 |
-| `workstation/` | Java 桌面工作台、进程监管、管理员能力门与局域网 API |
+| `workstation/` | Java 桌面工作台、进程监管、管理员能力门、本地 API 与受限云中继客户端 |
 | `mobile/` | Flutter Android 管理端 |
 | `web/` | Editor 前端、Vercel API、OSS 数据层与 Node 测试 |
 | `docs/` | 功能矩阵、设计系统、架构和安全说明 |
@@ -83,7 +86,7 @@ flutter analyze
 flutter test test/widget_test.dart
 ```
 
-移动端默认只连接私有局域网地址，不把桌面管理端口暴露到公网。Android 签名文件不属于源码，也不会进入 Git。
+首次配对仅接受私有局域网地址，桌面管理端口不会暴露到公网。配对完成后，App 保存一个不可读取云密钥、可由桌面立即撤销的设备令牌；跨网络操作只允许固定白名单接口，并由在线工作站出站轮询执行。Android 签名文件不属于源码，也不会进入 Git。
 
 ## 运行数据与素材
 
@@ -100,6 +103,8 @@ flutter test test/widget_test.dart
 ## 可靠性设计
 
 - 数据库编辑使用事务，写入失败执行回滚。
+- 歌曲编辑同时原子更新 CSV 与 SQLite，避免机器人重启导入 CSV 后覆盖刚保存的修改。
+- 图片和音频上传先写入设备隔离的临时对象，再由工作站校验类型、大小、歌曲 ID 并调用统一压缩发布流水线；完成后删除暂存对象。
 - Stable 保存前同时备份 XLSX 与 CSV，任何一步失败恢复旧文件。
 - 公告保存使用 revision/CAS 语义，避免多人覆盖；发送使用带过期时间的 claim token，避免重复消费。
 - 删除采用归档/软删除，关键云端写入受紧急锁控制；策略不可读取时按 fail-closed 处理。

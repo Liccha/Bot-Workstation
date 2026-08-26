@@ -31,27 +31,6 @@ class DashboardScreen extends StatelessWidget {
           onStart: () => _run(context, controller.action('napcat.start')),
           onStop: () => _run(context, controller.action('napcat.stop')),
         ),
-        const SizedBox(height: 24),
-        Text('电脑端模块', style: Theme.of(context).textTheme.titleLarge),
-        const SizedBox(height: 12),
-        _ModuleTile(
-          icon: Icons.graphic_eq_rounded,
-          title: '谱面录入与图片设计',
-          subtitle: '在电脑打开复杂制图工作区',
-          action: () => _run(context, controller.action('open.mcz')),
-        ),
-        _ModuleTile(
-          icon: Icons.campaign_outlined,
-          title: '公告及网站管理',
-          subtitle: '管理员验证仍在电脑端完成',
-          action: () => _run(context, controller.action('open.admin')),
-        ),
-        _ModuleTile(
-          icon: Icons.tune_rounded,
-          title: '运营中心',
-          subtitle: '每日推荐、竞猜与正式站检查',
-          action: () => _run(context, controller.action('open.operations')),
-        ),
       ],
     ),
   );
@@ -184,40 +163,4 @@ class _ServiceCard extends StatelessWidget {
       ),
     );
   }
-}
-
-class _ModuleTile extends StatelessWidget {
-  const _ModuleTile({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.action,
-  });
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback action;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 10),
-    child: Card(
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-        leading: Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8EFF6),
-            borderRadius: BorderRadius.circular(13),
-          ),
-          child: Icon(icon, color: AppTheme.accent),
-        ),
-        title: Text(title, style: Theme.of(context).textTheme.titleMedium),
-        subtitle: Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
-        trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
-        onTap: action,
-      ),
-    ),
-  );
 }

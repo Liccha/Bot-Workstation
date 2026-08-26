@@ -17,6 +17,9 @@ public final class MobileControlServerRegressionTest {
     private MobileControlServerRegressionTest() {}
 
     public static void main(String[] args) throws Exception {
+        System.setProperty("botstation.mobile.bind", "127.0.0.1");
+        System.setProperty("botstation.mobile.port", "18098");
+        System.setProperty("botstation.mobile.relay.disabled", "true");
         BotPaths paths = BotPaths.detect(); LogBus log = new LogBus(paths.logs());
         MobileControlServer server = new MobileControlServer(paths, log, new ProcessSupervisor(paths, log), ignored -> {});
         try {
@@ -27,7 +30,7 @@ public final class MobileControlServerRegressionTest {
             Response index = request(baseUrl, "GET", "/", null, null);
             require(index.code == 200 && index.body.contains("Bot 工作站"), "mobile index failed");
             require(index.csp != null && index.csp.contains("frame-ancestors 'none'"), "CSP missing");
-            require(!index.body.contains("desktopToken") && !index.body.contains("AccessKey") && !index.body.contains("example-admin-secret"), "secret leaked to mobile HTML");
+            require(!index.body.contains("desktopToken") && !index.body.contains("AccessKey") && !index.body.contains("iamthetrueeditor"), "secret leaked to mobile HTML");
 
             Response unauthorized = request(baseUrl, "GET", "/api/status", null, null);
             require(unauthorized.code == 401, "status endpoint is not protected");
@@ -39,6 +42,12 @@ public final class MobileControlServerRegressionTest {
             require(status.code == 200 && new JSONObject(status.body).has("songBot"), "paired status failed");
             Response songs = request(baseUrl, "GET", "/api/songs?q=&limit=2", null, token);
             require(songs.code == 200 && new JSONObject(songs.body).getJSONArray("items").length() <= 2, "song data endpoint failed");
+            Response completeSongs = request(baseUrl, "GET", "/api/songs?q=&limit=5000", null, token);
+            JSONObject completePayload = new JSONObject(completeSongs.body);
+            require(completeSongs.code == 200 && completePayload.getJSONArray("items").length() > 100,
+                "mobile song endpoint is still capped at 100 records");
+            require(completePayload.getJSONArray("items").getJSONObject(0).has("song_nickname2"),
+                "mobile song endpoint drops additional nickname fields");
             Response stable = request(baseUrl, "GET", "/api/stable?q=&limit=2", null, token);
             require(stable.code == 200 && new JSONObject(stable.body).getJSONArray("items").length() <= 2, "stable data endpoint failed");
 
@@ -47,7 +56,12 @@ public final class MobileControlServerRegressionTest {
             require(css.contains("overflow-x:clip") && css.contains("minmax(0,1fr)") && !css.contains("100vw"), "responsive CSS invariant failed");
             require(script.contains("/api/songs") && script.contains("/api/stable") && script.contains("textContent"), "mobile data UI missing");
             System.out.println("MOBILE_CONTROL_GREEN");
-        } finally { server.close(); }
+        } finally {
+            server.close();
+            System.clearProperty("botstation.mobile.bind");
+            System.clearProperty("botstation.mobile.port");
+            System.clearProperty("botstation.mobile.relay.disabled");
+        }
     }
 
     private static Response request(String baseUrl, String method, String path, String body, String token) throws Exception {
