@@ -25,11 +25,17 @@ class AppController extends ChangeNotifier {
       final session = await _store.load();
       if (session != null) {
         api = WorkstationApi(session.server, token: session.token);
-        await refresh();
+        // A paired device account is durable. A slow or offline workstation must
+        // not discard it or send the user back to the pairing screen.
+        booting = false;
+        notifyListeners();
+        try {
+          await refresh();
+        } catch (error) {
+          lastError = error.toString();
+        }
       }
     } catch (error) {
-      api?.close();
-      api = null;
       lastError = error.toString();
     } finally {
       booting = false;
@@ -64,7 +70,14 @@ class AppController extends ChangeNotifier {
       await _store.save(next.server, next.token!);
       api?.close();
       api = next;
-      await refresh();
+      next = null;
+      try {
+        await refresh();
+      } catch (error) {
+        // Pairing already created and saved the long-lived device account. Keep
+        // it even if the first status refresh is temporarily unavailable.
+        lastError = error.toString();
+      }
     } catch (error) {
       next?.close();
       lastError = error.toString();
@@ -78,12 +91,12 @@ class AppController extends ChangeNotifier {
   Future<void> refresh() async {
     final current = api;
     if (current == null) return;
-    status = await current.status();
-    try {
-      update = await current.updateStatus();
-    } catch (_) {
-      update = const {};
-    }
+    final values = await Future.wait<Map<String, dynamic>>([
+      current.status(),
+      current.updateStatus().catchError((_) => <String, dynamic>{}),
+    ]);
+    status = values[0];
+    update = values[1];
     notifyListeners();
   }
 

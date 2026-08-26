@@ -63,6 +63,35 @@ test('device request crosses networks, is executed once, and returns only to its
   assert.equal((await call('GET', 'result', { headers: { authorization: `Device ${other.body.token}` }, query: { id: submitted.body.id } })).status, 404);
 });
 
+test('empty desktop poll does not take or wait for the queue lock', async () => {
+  const lockKey = 'locks/mobile-relay-queue.json';
+  await getStore().put(lockKey, Buffer.from(JSON.stringify({
+    token: crypto.randomUUID(), expiresAt: new Date(Date.now() + 30_000).toISOString()
+  })));
+  const started = Date.now();
+  try {
+    const polled = await call('GET', 'desktop-poll', { headers: desktop });
+    assert.equal(polled.status, 200);
+    assert.deepEqual(polled.body.items, []);
+    assert.ok(Date.now() - started < 1_000, 'empty poll waited for the queue lock');
+  } finally {
+    await getStore().delete(lockKey);
+  }
+});
+
+test('independent request objects preserve concurrent mobile submissions', async () => {
+  const registered = await call('POST', 'register-device', { headers: desktop, body: { name: '并发设备' } });
+  const headers = { authorization: `Device ${registered.body.token}` };
+  const [first, second] = await Promise.all([
+    call('POST', 'submit', { headers, body: { method: 'GET', path: '/api/status' } }),
+    call('POST', 'submit', { headers, body: { method: 'GET', path: '/api/update' } })
+  ]);
+  assert.equal(first.status, 202);
+  assert.equal(second.status, 202);
+  const polled = await call('GET', 'desktop-poll', { headers: desktop });
+  assert.deepEqual(new Set(polled.body.items.map(item => item.id)), new Set([first.body.id, second.body.id]));
+});
+
 test('relay rejects arbitrary paths and revoked accounts immediately', async () => {
   const registered = await call('POST', 'register-device', { headers: desktop, body: { name: '待撤销' } });
   const headers = { authorization: `Device ${registered.body.token}` };

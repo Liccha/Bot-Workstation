@@ -54,7 +54,7 @@ final class AdminIpTrustClient {
         try { host = InetAddress.getLocalHost().getHostName(); }
         catch (Exception ignored) { host = "desktop"; }
         String device = "bot-workstation-" + host.replaceAll("[^A-Za-z0-9_.-]", "_");
-        return new AdminIpTrustClient(URI.create(api), token, device, 2500, 4000);
+        return new AdminIpTrustClient(URI.create(api), token, device, 5000, 12000);
     }
 
     static AdminIpTrustClient forTest(URI api, String token) {
