@@ -7,8 +7,6 @@ import com.botstation.ui.DesignTokens;
 import com.botstation.ui.UiKit;
 
 import javax.swing.BorderFactory;
-import javax.swing.Box;
-import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
@@ -26,6 +24,7 @@ import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.BorderLayout;
 import java.awt.Dialog;
 import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
@@ -153,7 +152,7 @@ public final class SongLibraryPanel extends JPanel {
                 dialog.dispose(); reload();
             }, error -> { save.setEnabled(true); showError("保存失败，数据库没有发生部分写入", error); });
         });
-        JPanel buttons = UiKit.flow(cover, audio, Box.createHorizontalStrut(12), cancel, save); buttons.setBorder(BorderFactory.createEmptyBorder(10, 16, 12, 16));
+        JPanel buttons = editorActionBar(cover, audio, cancel, save);
         dialog.add(scroll, BorderLayout.CENTER); dialog.add(buttons, BorderLayout.SOUTH);
         dialog.setSize(new Dimension(700, 720)); dialog.setLocationRelativeTo(owner); dialog.setVisible(true);
     }
@@ -168,13 +167,51 @@ public final class SongLibraryPanel extends JPanel {
         Path selected = chooser.getSelectedFile().toPath(); cover.setEnabled(false); audio.setEnabled(false);
         String original = "image".equals(type) ? "更换歌曲图片" : "更换歌曲音频";
         JButton active = "image".equals(type) ? cover : audio; active.setText("正在压缩并发布…");
+        equalizeButtonWidths(cover, audio);
         tasks.run(() -> assets.publish(id, type, selected), saved -> {
-            active.setText(original); cover.setEnabled(true); audio.setEnabled(true);
+            active.setText(original); equalizeButtonWidths(cover, audio); cover.setEnabled(true); audio.setEnabled(true);
             JOptionPane.showMessageDialog(dialog, "资源已压缩并发布，原歌曲 ID 不变。", "发布完成", JOptionPane.INFORMATION_MESSAGE);
             dialog.dispose(); reload();
         }, error -> {
-            active.setText(original); cover.setEnabled(true); audio.setEnabled(true); showError("资源发布失败，原文件已恢复", error);
+            active.setText(original); equalizeButtonWidths(cover, audio); cover.setEnabled(true); audio.setEnabled(true); showError("资源发布失败，原文件已恢复", error);
         });
+    }
+
+    /* Hallmark · component: editor action bar · genre: modern-minimal · theme: Bot workstation
+       States remain owned by UiKit and the existing async handlers; spacing follows the 8/16 rhythm. */
+    static JPanel editorActionBar(JButton cover, JButton audio, JButton cancel, JButton save) {
+        equalizeButtonWidths(cover, audio);
+        equalizeButtonWidths(cancel, save);
+
+        JPanel resources = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        resources.setOpaque(false);
+        resources.add(cover);
+        resources.add(audio);
+
+        JPanel decisions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        decisions.setOpaque(false);
+        decisions.add(cancel);
+        decisions.add(save);
+
+        JPanel bar = new JPanel(new BorderLayout(16, 0));
+        bar.setOpaque(false);
+        bar.setBorder(BorderFactory.createEmptyBorder(12, 16, 14, 16));
+        bar.add(resources, BorderLayout.WEST);
+        bar.add(decisions, BorderLayout.EAST);
+        return bar;
+    }
+
+    private static void equalizeButtonWidths(JButton... buttons) {
+        int width = 0;
+        int height = 0;
+        for (JButton button : buttons) {
+            button.setPreferredSize(null);
+            Dimension preferred = button.getPreferredSize();
+            width = Math.max(width, preferred.width);
+            height = Math.max(height, preferred.height);
+        }
+        Dimension shared = new Dimension(width, height);
+        for (JButton button : buttons) button.setPreferredSize(shared);
     }
 
     private void setBusy(boolean busy, String text) { search.setEnabled(!busy); table.setEnabled(!busy); count.setText(text); }
