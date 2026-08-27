@@ -23,9 +23,7 @@ class DashboardScreen extends StatelessWidget {
           detail: controller.cloudIndependent
               ? '群消息、公告调度、猜歌与接口服务 · 电脑在线时可远程控制'
               : '群消息、公告调度、猜歌与接口服务',
-          state: controller.cloudIndependent
-              ? 'remote'
-              : controller.status['songBot']?.toString() ?? 'unknown',
+          state: controller.status['songBot']?.toString() ?? 'unknown',
           icon: Icons.smart_toy_outlined,
           onStart: () => _run(context, controller.action('songbot.start')),
           onStop: () => _run(context, controller.action('songbot.stop')),
@@ -36,13 +34,13 @@ class DashboardScreen extends StatelessWidget {
           detail: controller.cloudIndependent
               ? 'QQ 连接与 OneBot 消息通道 · 电脑在线时可远程控制'
               : 'QQ 连接与 OneBot 消息通道',
-          state: controller.cloudIndependent
-              ? 'remote'
-              : controller.status['napCat']?.toString() ?? 'unknown',
+          state: controller.status['napCat']?.toString() ?? 'unknown',
           icon: Icons.forum_outlined,
           onStart: () => _run(context, controller.action('napcat.start')),
           onStop: () => _run(context, controller.action('napcat.stop')),
         ),
+        const SizedBox(height: 14),
+        _AutomationCard(controller: controller),
       ],
     ),
   );
@@ -60,6 +58,32 @@ class DashboardScreen extends StatelessWidget {
             .showSnackBar(SnackBar(content: Text(error.toString())));
       }
     }
+  }
+}
+
+class _AutomationCard extends StatelessWidget {
+  const _AutomationCard({required this.controller});
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = controller.status['dailyAutomation'] == true;
+    final online = controller.status['workstationOnline'] == true;
+    return Card(
+      child: SwitchListTile.adaptive(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+        secondary: const Icon(Icons.music_note_rounded, color: AppTheme.violet),
+        title: Text('每日歌曲与竞猜', style: Theme.of(context).textTheme.titleLarge),
+        subtitle: Text(enabled ? '当前已开启' : '当前已关闭'),
+        value: enabled,
+        onChanged: online && !controller.busy
+            ? (value) => DashboardScreen._run(
+                context,
+                controller.action(value ? 'daily.automation.enable' : 'daily.automation.disable'),
+              )
+            : null,
+      ),
+    );
   }
 }
 
@@ -98,11 +122,6 @@ class _CloudCard extends StatelessWidget {
                   ),
                 ),
               ],
-            ),
-            const SizedBox(height: 12),
-            Text(
-              '无需电脑在线，也不受 Wi-Fi、流量或 VPN 切换影响。',
-              style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 18),
             Row(

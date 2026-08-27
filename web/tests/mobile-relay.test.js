@@ -41,6 +41,21 @@ test('pairing creates a revocable hidden device account without storing its secr
   assert.equal(Object.hasOwn(listed.body.items[0], 'secretHash'), false);
 });
 
+test('desktop heartbeat provides sub-second cached presence', async () => {
+  const registered = await call('POST', 'register-device', { headers: desktop, body: { name: '状态设备' } });
+  const deviceHeaders = { authorization: `Device ${registered.body.token}` };
+  assert.equal((await call('POST', 'desktop-heartbeat', {
+    headers: desktop,
+    body: { songBot: 'running', napCat: 'stopped', dailyAutomation: false },
+  })).status, 200);
+  const started = Date.now();
+  const presence = await call('GET', 'presence', { headers: deviceHeaders });
+  assert.ok(Date.now() - started < 1000);
+  assert.equal(presence.body.workstationOnline, true);
+  assert.equal(presence.body.songBot, 'running');
+  assert.equal(presence.body.dailyAutomation, false);
+});
+
 test('device request crosses networks, is executed once, and returns only to its account', async () => {
   const registered = await call('POST', 'register-device', { headers: desktop, body: { name: '跨网设备' } });
   const deviceHeaders = { authorization: `Device ${registered.body.token}` };

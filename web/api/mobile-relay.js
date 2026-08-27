@@ -8,12 +8,14 @@ const mobileAuth = require('./_lib/mobile-auth');
 const DEVICES_KEY = mobileAuth.DEVICES_KEY;
 const INBOX_PREFIX = 'mobile-relay/inboxes/';
 const CLAIM_PREFIX = 'mobile-relay/claims/';
+const PRESENCE_KEY = 'mobile-relay/desktop-presence.json';
 const REQUEST_TTL_MS = 30 * 60 * 1000;
 const RESPONSE_TTL_MS = 60 * 60 * 1000;
 const CLAIM_MS = 15 * 60 * 1000;
 const RESULT_REUSE_GRACE_MS = 30 * 1000;
 const MAX_DEVICES = 50;
 const DEVICE_SLOTS = 8;
+const PRESENCE_TTL_MS = 75 * 1000;
 
 function json(res, status, value) {
   res.statusCode = status;
@@ -122,6 +124,11 @@ function cleanName(value) {
   return Array.from(text || '手机设备').slice(0, 48).join('');
 }
 
+function cleanServiceState(value) {
+  const state = String(value || '').toLowerCase();
+  return ['running', 'stopped', 'degraded', 'unknown'].includes(state) ? state : 'unknown';
+}
+
 function cleanRelayRequest(input) {
   const method = String(input.method || '').toUpperCase();
   const path = String(input.path || '');
@@ -133,7 +140,8 @@ function cleanRelayRequest(input) {
     ['POST /api/action', true], ['POST /api/song-asset', true]
   ]);
   if (!allowed.has(`${method} ${path}`)) throw badRequest();
-  if (path === '/api/action' && !['songbot.start', 'songbot.stop', 'napcat.start', 'napcat.stop', 'update.install']
+  if (path === '/api/action' && !['songbot.start', 'songbot.stop', 'napcat.start', 'napcat.stop', 'update.install',
+    'daily.automation.enable', 'daily.automation.disable']
     .includes(String(requestBody.action || ''))) throw badRequest();
   const cleanQuery = {};
   for (const key of ['q', 'offset', 'limit']) if (queryValue[key] != null) cleanQuery[key] = String(queryValue[key]).slice(0, key === 'q' ? 160 : 12);
@@ -153,6 +161,34 @@ module.exports = async function handler(req, res) {
     }
 
     const desktop = security.desktopAuthorized(req);
+    if (action === 'desktop-heartbeat' && req.method === 'POST') {
+      if (!desktop) throw unauthorized();
+      await emergency.assertWriteAllowed();
+      const input = body(req);
+      const presence = {
+        updatedAt: now(),
+        workstation: cleanName(req.headers?.['x-admin-device'] || 'Bot工作站'),
+        songBot: cleanServiceState(input.songBot),
+        napCat: cleanServiceState(input.napCat),
+        dailyAutomation: input.dailyAutomation === true,
+      };
+      await getStore().put(PRESENCE_KEY, Buffer.from(JSON.stringify(presence)));
+      return json(res, 200, { ok: true, updatedAt: presence.updatedAt });
+    }
+
+    if (action === 'presence' && req.method === 'GET') {
+      const device = await deviceFromRequest(req); if (!device) throw unauthorized();
+      const presence = await readJson(PRESENCE_KEY, null);
+      const updated = Date.parse(presence?.updatedAt || 0);
+      const online = Number.isFinite(updated) && Date.now() - updated <= PRESENCE_TTL_MS;
+      return json(res, 200, {
+        workstationOnline: online,
+        songBot: online ? cleanServiceState(presence?.songBot) : 'offline',
+        napCat: online ? cleanServiceState(presence?.napCat) : 'offline',
+        dailyAutomation: presence?.dailyAutomation === true,
+        updatedAt: presence?.updatedAt || null,
+      });
+    }
     if (action === 'register-device' && req.method === 'POST') {
       if (!desktop) throw unauthorized();
       await emergency.assertWriteAllowed();

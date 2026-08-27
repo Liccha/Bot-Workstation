@@ -42,6 +42,7 @@ final class CloudMobileRelay implements AutoCloseable {
     }
 
     private static final int MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+    private static final long HEARTBEAT_INTERVAL_MS = 30_000L;
     private final URI endpoint;
     private final String desktopToken;
     private final String workstationName;
@@ -50,6 +51,8 @@ final class CloudMobileRelay implements AutoCloseable {
     private ExecutorService worker;
     private Handler handler;
     private volatile String lastError = "";
+    private volatile String lastHeartbeatError = "";
+    private volatile long nextHeartbeatAt;
 
     private CloudMobileRelay(URI endpoint, String desktopToken, String workstationName, LogBus log) {
         this.endpoint = validateEndpoint(endpoint); this.desktopToken = desktopToken;
@@ -102,6 +105,7 @@ final class CloudMobileRelay implements AutoCloseable {
     private void pollLoop() {
         while (running.get()) {
             try {
+                publishHeartbeatIfDue();
                 JSONArray items = request("GET", "desktop-poll", null, true).optJSONArray("items");
                 if (!lastError.isEmpty()) { lastError = ""; log.info("手机端", "跨网络设备中继已恢复"); }
                 if (items != null) for (int index = 0; index < items.length() && running.get(); index++) execute(items.getJSONObject(index));
@@ -128,6 +132,28 @@ final class CloudMobileRelay implements AutoCloseable {
                 .put("status", status).put("body", result), true);
         } catch (Exception error) {
             log.warn("手机端", "跨网络操作结果回传失败：" + safeMessage(error));
+        }
+        nextHeartbeatAt = 0L;
+    }
+
+    private void publishHeartbeatIfDue() {
+        long current = System.currentTimeMillis();
+        if (current < nextHeartbeatAt || handler == null) return;
+        nextHeartbeatAt = current + HEARTBEAT_INTERVAL_MS;
+        try {
+            RelayResponse status = handler.execute(new JSONObject().put("method", "GET").put("path", "/api/status"));
+            if (status.status < 200 || status.status >= 300) throw new IOException("本机状态不可用");
+            request("POST", "desktop-heartbeat", status.body, true);
+            if (!lastHeartbeatError.isEmpty()) {
+                lastHeartbeatError = "";
+                log.info("手机端", "电脑在线状态已恢复同步");
+            }
+        } catch (Exception error) {
+            String message = safeMessage(error);
+            if (!message.equals(lastHeartbeatError)) {
+                lastHeartbeatError = message;
+                log.warn("手机端", "电脑在线状态暂未同步：" + message);
+            }
         }
     }
 

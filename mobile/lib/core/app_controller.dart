@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import 'api_client.dart';
@@ -101,6 +103,22 @@ class AppController extends ChangeNotifier {
   Future<void> refresh() async {
     final current = api;
     if (current == null) return;
+    if (cloudIndependent) {
+      final liveStatus = await current.serviceStatus().then<Map<String, dynamic>>(
+        (value) => value,
+        onError: (_) => <String, dynamic>{
+          'workstationOnline': status['workstationOnline'],
+          'songBot': status['songBot'] ?? 'unknown',
+          'napCat': status['napCat'] ?? 'unknown',
+          'dailyAutomation': status['dailyAutomation'] ?? false,
+        },
+      );
+      if (api != current) return;
+      status = {...status, ...liveStatus};
+      notifyListeners();
+      unawaited(_refreshCloudSnapshot(current));
+      return;
+    }
     final values = await Future.wait<Map<String, dynamic>>([
       current.status(),
       current.updateStatus().catchError((_) => <String, dynamic>{}),
@@ -108,6 +126,23 @@ class AppController extends ChangeNotifier {
     status = values[0];
     update = values[1];
     notifyListeners();
+  }
+
+  Future<void> _refreshCloudSnapshot(WorkstationApi current) async {
+    try {
+      final snapshot = await current.status();
+      if (api != current) return;
+      final live = <String, dynamic>{
+        for (final key in const [
+          'workstationOnline', 'songBot', 'napCat', 'dailyAutomation', 'updatedAt',
+        ])
+          if (status.containsKey(key)) key: status[key],
+      };
+      status = {...snapshot, ...live};
+      notifyListeners();
+    } catch (_) {
+      // Cached library data remains usable; online state was already refreshed.
+    }
   }
 
   Future<void> action(String value) async {

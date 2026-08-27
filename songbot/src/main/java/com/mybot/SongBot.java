@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.concurrent.Executors;
@@ -68,6 +69,18 @@ public class SongBot {
 
     private static File songBotFile(String relative) {
         return SONG_BOT_HOME.resolve(relative).normalize().toFile();
+    }
+
+    private static boolean dailyPushAutomationEnabled() {
+        File file = songBotFile("data/operations.properties");
+        if (!file.isFile()) return false;
+        Properties values = new Properties();
+        try (Reader reader = new InputStreamReader(new FileInputStream(file), StandardCharsets.UTF_8)) {
+            values.load(reader);
+            return Boolean.parseBoolean(values.getProperty("dailyPushAutomationEnabled", "false"));
+        } catch (IOException ignored) {
+            return false;
+        }
     }
 
     /**
@@ -150,10 +163,6 @@ public class SongBot {
             2000000004L,
             2000000005L
     );
-    // 临时运营开关：关闭时仅暂停上述两个群的每日随机歌曲推送，
-    // 以及该流程附带的自动猜歌榜单发布/周期结算；模块和历史数据仍完整保留。
-    private static final boolean DAILY_PUSH_AUTOMATION_ENABLED = false;
-
     // 定时任务调度器
     private static final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
     private static final Map<Integer, Long> SONG_UNLOCK_TIME_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
@@ -467,9 +476,8 @@ public class SongBot {
         stableService.initDatabase(songBotFile("stable_info.csv").toPath());
         stableService.startScheduler();
         // 3. 启动每日推送 + 公告定时调度
-        if (DAILY_PUSH_AUTOMATION_ENABLED) {
-            startDailyScheduler();
-        } else {
+        startDailyScheduler();
+        if (!dailyPushAutomationEnabled()) {
             System.out.println("⏸️ 两群每日随机歌曲推送与自动猜歌榜单结算已暂停；模块和历史数据均保留。");
         }
         startAnnounceScheduler();
@@ -2703,7 +2711,7 @@ public class SongBot {
 
         // 【调试开关】true = 强制推送 (无视今日是否已推过) | false = 正常模式
         // ★★★ 测试完记得改回 false ★★★
-        boolean FORCE_PUSH_MODE = true;
+        boolean FORCE_PUSH_MODE = false;
 
         System.out.println("⏰ 定时任务已启动: 将在 " + targetHour + ":" + String.format("%02d", targetMinute) + " 触发");
         if (FORCE_PUSH_MODE) {
@@ -2713,6 +2721,7 @@ public class SongBot {
         // 每分钟轮询一次
         scheduler.scheduleAtFixedRate(() -> {
             try {
+                if (!dailyPushAutomationEnabled()) return;
                 LocalDateTime now = LocalDateTime.now();
                 int h = now.getHour();
                 int m = now.getMinute();

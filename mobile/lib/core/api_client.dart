@@ -106,6 +106,17 @@ class WorkstationApi {
   }
 
   Future<Map<String, dynamic>> status() => _send('GET', '/api/status');
+  Future<Map<String, dynamic>> serviceStatus() {
+    if (!_remoteCloud) return status();
+    return _direct(
+      'GET',
+      Uri.parse(server).replace(
+        path: '/api/mobile-relay',
+        queryParameters: const {'action': 'presence'},
+      ),
+      timeout: const Duration(seconds: 1),
+    );
+  }
   Future<Map<String, dynamic>> updateStatus() => _send('GET', '/api/update');
   Future<void> action(String action) async {
     if (_remoteCloud) {

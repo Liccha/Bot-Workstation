@@ -406,7 +406,10 @@ class _RecordEditorState extends State<_RecordEditor> {
                 readOnly: entry.key.toLowerCase() == 'id',
                 minLines: 1,
                 maxLines: entry.key.toLowerCase().contains('nickname') ? 3 : 1,
-                decoration: InputDecoration(labelText: _fieldLabel(entry.key)),
+                decoration: InputDecoration(
+                  labelText: _fieldLabel(entry.key),
+                  floatingLabelBehavior: FloatingLabelBehavior.always,
+                ),
               );
             },
           ),
@@ -472,7 +475,15 @@ class _RecordEditorState extends State<_RecordEditor> {
       'image_path': '歌曲图片路径',
       'audio_path': '歌曲音频路径',
     };
-    return labels[key.toLowerCase()] ?? key;
+    final normalized = key.toLowerCase();
+    final difficulty = RegExp(r'^(4|5|6|7|8)k_(ez|nm|hd|mx|sp)$').firstMatch(normalized);
+    if (difficulty != null) {
+      const levels = {
+        'ez': '简单', 'nm': '普通', 'hd': '困难', 'mx': '极限', 'sp': '特殊',
+      };
+      return '${difficulty.group(1)}K ${levels[difficulty.group(2)]}';
+    }
+    return labels[normalized] ?? key;
   }
 }
 

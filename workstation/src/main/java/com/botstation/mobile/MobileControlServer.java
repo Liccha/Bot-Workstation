@@ -5,6 +5,7 @@ import com.botstation.core.LogBus;
 import com.botstation.core.ProcessSupervisor;
 import com.botstation.core.UpdateService;
 import com.botstation.features.MobileDataService;
+import com.botstation.features.OperationsSettings;
 import com.botstation.features.SongAssetService;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
@@ -54,6 +55,7 @@ public final class MobileControlServer implements AutoCloseable {
     private final UpdateService updates;
     private final Consumer<String> openModule;
     private final MobileDataService data;
+    private final OperationsSettings operations;
     private final SongAssetService songAssets;
     private final CloudMobileRelay relay;
     private final Map<String, Deque<Long>> pairAttempts = new ConcurrentHashMap<>();
@@ -73,6 +75,7 @@ public final class MobileControlServer implements AutoCloseable {
         this.paths = paths; this.log = log; this.services = services; this.openModule = openModule;
         this.updates = updates;
         this.data = new MobileDataService(paths);
+        this.operations = new OperationsSettings(paths.songBot);
         this.songAssets = new SongAssetService(paths, log);
         CloudMobileRelay configured = null;
         try {
@@ -168,6 +171,8 @@ public final class MobileControlServer implements AutoCloseable {
         JSONObject value = new JSONObject()
             .put("songBot", services.songBotState().name().toLowerCase())
             .put("napCat", services.napCatState().name().toLowerCase())
+            .put("dailyAutomation", operations.dailyAutomationEnabled())
+            .put("workstationOnline", true)
             .put("editor", paths.editorUrl);
         respond(exchange, 200, value.toString());
     }
@@ -193,6 +198,8 @@ public final class MobileControlServer implements AutoCloseable {
                 case "songbot.stop": services.stopSongBot(); break;
                 case "napcat.start": services.startNapCat(); break;
                 case "napcat.stop": services.stopNapCat(); break;
+                case "daily.automation.enable": operations.setDailyAutomationEnabled(true); break;
+                case "daily.automation.disable": operations.setDailyAutomationEnabled(false); break;
                 case "open.library": openModule.accept("library"); break;
                 case "open.mcz": openModule.accept("mcz"); break;
                 case "open.stable": openModule.accept("stable"); break;
@@ -314,7 +321,8 @@ public final class MobileControlServer implements AutoCloseable {
         JSONObject body = payload.optJSONObject("body");
         if ("POST /api/action".equals(key)) {
             String actionName = body == null ? "" : body.optString("action", "");
-            if (!Set.of("songbot.start", "songbot.stop", "napcat.start", "napcat.stop", "update.install").contains(actionName))
+            if (!Set.of("songbot.start", "songbot.stop", "napcat.start", "napcat.stop", "update.install",
+                "daily.automation.enable", "daily.automation.disable").contains(actionName))
                 return new CloudMobileRelay.RelayResponse(400, new JSONObject().put("error", "未知操作"));
         }
         StringBuilder url = new StringBuilder("http://127.0.0.1:").append(port).append(path);
