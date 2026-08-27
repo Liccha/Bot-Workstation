@@ -112,9 +112,10 @@ class _BotWorkstationAppState extends State<BotWorkstationApp> {
             );
           }
         } finally {
-          progress.dispose();
           final current = navigatorKey.currentState;
           if (current != null && current.canPop()) current.pop();
+          await Future<void>.delayed(const Duration(milliseconds: 120));
+          progress.dispose();
         }
       }
     });
