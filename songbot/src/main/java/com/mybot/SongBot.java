@@ -70,6 +70,56 @@ public class SongBot {
         return SONG_BOT_HOME.resolve(relative).normalize().toFile();
     }
 
+    /**
+     * Pulls cloud library changes once during startup. Message handlers never
+     * contact the cloud: they continue to query the local SQLite database.
+     */
+    private static void syncMobileCloudToLocal() {
+        Path workflow = songBotFile("tools/sync_mobile_cloud_to_local.py").toPath();
+        if (!java.nio.file.Files.isRegularFile(workflow)) return;
+
+        Process process = null;
+        try {
+            ProcessBuilder builder = new ProcessBuilder("python", workflow.toString());
+            builder.directory(SONG_BOT_HOME.toFile());
+            builder.redirectErrorStream(true);
+            builder.environment().put("PYTHONIOENCODING", "utf-8");
+            process = builder.start();
+
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            Process running = process;
+            Thread reader = new Thread(() -> {
+                try (InputStream stream = running.getInputStream()) {
+                    byte[] buffer = new byte[2048];
+                    int read;
+                    while ((read = stream.read(buffer)) >= 0 && output.size() < 16 * 1024) {
+                        output.write(buffer, 0, Math.min(read, 16 * 1024 - output.size()));
+                    }
+                } catch (IOException ignored) {
+                }
+            }, "mobile-cloud-sync-output");
+            reader.setDaemon(true);
+            reader.start();
+
+            if (!process.waitFor(120, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                System.err.println("Cloud library startup sync timed out; local data remains active.");
+                return;
+            }
+            reader.join(1000);
+            String message = output.toString(StandardCharsets.UTF_8).trim();
+            if (process.exitValue() == 0) {
+                if (!message.isEmpty()) System.out.println("Cloud library: " + message);
+            } else {
+                System.err.println("Cloud library sync failed; local data remains active." +
+                        (message.isEmpty() ? "" : " " + message));
+            }
+        } catch (Exception error) {
+            if (process != null && process.isAlive()) process.destroyForcibly();
+            System.err.println("Cloud library sync could not start; local data remains active: " + error.getMessage());
+        }
+    }
+
     // --- 配置常量 ---
     private static final int FUZZY_SEARCH_LIMIT = 600;
     private static final int LARGE_RESULT_THRESHOLD = 60; // 统一使用这个阈值
@@ -403,8 +453,9 @@ public class SongBot {
         dbService.initDailyTables();
         dbService.initGameTables(); // 初始化积分表
 
-        // 2. 导入数据 (每次启动都重新读一遍 csv，保证曲库和排期永远最新)
+        // 2. 启动时低频同步云端曲库，再导入本地数据库；群消息查询不访问云端。
         System.out.println("🔄 正在自动导入最新曲库...");
+        syncMobileCloudToLocal();
         dbService.importCsv(songBotFile("songs.csv").getAbsolutePath());
         // 后台自动同步曲库到 GitHub
         new Thread(() -> syncSongLibrary()).start();
