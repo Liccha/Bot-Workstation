@@ -4,6 +4,8 @@ import 'package:bot_workstation_mobile/core/app_controller.dart';
 import 'package:bot_workstation_mobile/core/mobile_update_service.dart';
 import 'package:bot_workstation_mobile/core/session_store.dart';
 import 'package:bot_workstation_mobile/main.dart';
+import 'package:bot_workstation_mobile/screens/dashboard_screen.dart';
+import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -80,6 +82,35 @@ void main() {
   });
 
   test(
+    'cloud-independent account can relay service controls when PC is online',
+    () async {
+      final requests = <http.Request>[];
+      final api = WorkstationApi(
+        'https://editor.teacharm.moe/api/mobile-data',
+        token: 'device-id.device-secret',
+        client: MockClient((request) async {
+          requests.add(request);
+          expect(request.url.path, '/api/mobile-relay');
+          expect(
+            request.headers['authorization'],
+            'Device device-id.device-secret',
+          );
+          if (request.url.queryParameters['action'] == 'submit') {
+            expect(request.body, contains('songbot.start'));
+            return http.Response('{"id":"control-id","state":"pending"}', 202);
+          }
+          return http.Response(
+            '{"id":"control-id","state":"complete","response":{"status":200,"body":{"ok":true}}}',
+            200,
+          );
+        }),
+      );
+      await api.action('songbot.start');
+      expect(requests.length, 2);
+    },
+  );
+
+  test(
     'pairing preflights the LAN endpoint and normalizes the displayed code',
     () async {
       final paths = <String>[];
@@ -125,6 +156,28 @@ void main() {
     expect(find.text('发现新版本 9.9.9'), findsOneWidget);
     expect(find.text('一键更新'), findsOneWidget);
     expect(find.text('连接 Bot 工作站'), findsOneWidget);
+  });
+
+  testWidgets('cloud-independent dashboard keeps SongBot and NapCat controls', (
+    tester,
+  ) async {
+    final controller = AppController(_EmptySessionStore())
+      ..api = WorkstationApi(
+        'https://editor.teacharm.moe/api/mobile-data',
+        token: 'device-id.device-secret',
+      )
+      ..status = {
+        'songs': {'total': 1272},
+        'stable': {'total': 142},
+      };
+    await tester.pumpWidget(
+      MaterialApp(home: DashboardScreen(controller: controller)),
+    );
+    expect(find.text('云端独立运行'), findsOneWidget);
+    expect(find.text('SongBot'), findsOneWidget);
+    expect(find.text('NapCat'), findsOneWidget);
+    expect(find.text('启用'), findsNWidgets(2));
+    expect(find.text('停用'), findsNWidgets(2));
   });
 }
 

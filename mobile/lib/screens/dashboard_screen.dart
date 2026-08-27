@@ -16,11 +16,16 @@ class DashboardScreen extends StatelessWidget {
       children: [
         if (controller.cloudIndependent) ...[
           _CloudCard(controller: controller),
-        ] else ...[
+          const SizedBox(height: 14),
+        ],
         _ServiceCard(
           name: 'SongBot',
-          detail: '群消息、公告调度、猜歌与接口服务',
-          state: controller.status['songBot']?.toString() ?? 'unknown',
+          detail: controller.cloudIndependent
+              ? '群消息、公告调度、猜歌与接口服务 · 电脑在线时可远程控制'
+              : '群消息、公告调度、猜歌与接口服务',
+          state: controller.cloudIndependent
+              ? 'remote'
+              : controller.status['songBot']?.toString() ?? 'unknown',
           icon: Icons.smart_toy_outlined,
           onStart: () => _run(context, controller.action('songbot.start')),
           onStop: () => _run(context, controller.action('songbot.stop')),
@@ -28,13 +33,16 @@ class DashboardScreen extends StatelessWidget {
         const SizedBox(height: 14),
         _ServiceCard(
           name: 'NapCat',
-          detail: 'QQ 连接与 OneBot 消息通道',
-          state: controller.status['napCat']?.toString() ?? 'unknown',
+          detail: controller.cloudIndependent
+              ? 'QQ 连接与 OneBot 消息通道 · 电脑在线时可远程控制'
+              : 'QQ 连接与 OneBot 消息通道',
+          state: controller.cloudIndependent
+              ? 'remote'
+              : controller.status['napCat']?.toString() ?? 'unknown',
           icon: Icons.forum_outlined,
           onStart: () => _run(context, controller.action('napcat.start')),
           onStop: () => _run(context, controller.action('napcat.stop')),
         ),
-        ],
       ],
     ),
   );
@@ -74,21 +82,41 @@ class _CloudCard extends StatelessWidget {
               children: [
                 const Icon(Icons.cloud_done_rounded, color: AppTheme.accent),
                 const SizedBox(width: 12),
-                Expanded(child: Text('云端独立运行', style: Theme.of(context).textTheme.titleLarge)),
-                Text(locked ? '写入已阻断' : '可读写', style: TextStyle(
-                  color: locked ? const Color(0xFFE29021) : const Color(0xFF13A16D),
-                  fontWeight: FontWeight.w600,
-                )),
+                Expanded(
+                  child: Text(
+                    '云端独立运行',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+                Text(
+                  locked ? '写入已阻断' : '可读写',
+                  style: TextStyle(
+                    color: locked
+                        ? const Color(0xFFE29021)
+                        : const Color(0xFF13A16D),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 12),
-            Text('无需电脑在线，也不受 Wi-Fi、流量或 VPN 切换影响。', style: Theme.of(context).textTheme.bodySmall),
+            Text(
+              '无需电脑在线，也不受 Wi-Fi、流量或 VPN 切换影响。',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
             const SizedBox(height: 18),
             Row(
               children: [
-                Expanded(child: _Count(label: '歌曲', value: '${songs?['total'] ?? 0}')),
+                Expanded(
+                  child: _Count(label: '歌曲', value: '${songs?['total'] ?? 0}'),
+                ),
                 const SizedBox(width: 12),
-                Expanded(child: _Count(label: 'Stable', value: '${stable?['total'] ?? 0}')),
+                Expanded(
+                  child: _Count(
+                    label: 'Stable',
+                    value: '${stable?['total'] ?? 0}',
+                  ),
+                ),
               ],
             ),
           ],
@@ -105,12 +133,18 @@ class _Count extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-    decoration: BoxDecoration(color: const Color(0xFFF8F3F8), borderRadius: BorderRadius.circular(14)),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(value, style: Theme.of(context).textTheme.titleLarge),
-      const SizedBox(height: 3),
-      Text(label, style: Theme.of(context).textTheme.bodySmall),
-    ]),
+    decoration: BoxDecoration(
+      color: const Color(0xFFF8F3F8),
+      borderRadius: BorderRadius.circular(14),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(value, style: Theme.of(context).textTheme.titleLarge),
+        const SizedBox(height: 3),
+        Text(label, style: Theme.of(context).textTheme.bodySmall),
+      ],
+    ),
   );
 }
 
@@ -134,12 +168,17 @@ class _ServiceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final running = state == 'running';
     final degraded = state == 'degraded';
-    final label = running
+    final remote = state == 'remote';
+    final label = remote
+        ? '远程控制'
+        : running
         ? '已启用'
         : degraded
         ? '连接异常'
         : '未启用';
-    final color = running
+    final color = remote
+        ? AppTheme.violet
+        : running
         ? const Color(0xFF13A16D)
         : degraded
         ? const Color(0xFFE29021)
@@ -208,14 +247,14 @@ class _ServiceCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: FilledButton.tonal(
-                    onPressed: running ? null : onStart,
+                    onPressed: running && !remote ? null : onStart,
                     child: const Text('启用'),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: running || degraded ? onStop : null,
+                    onPressed: remote || running || degraded ? onStop : null,
                     child: const Text('停用'),
                   ),
                 ),

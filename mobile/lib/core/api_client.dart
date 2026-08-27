@@ -41,11 +41,7 @@ class WorkstationApi {
         !uri.hasPort &&
         {'editor.teacharm.moe', 'bot-editor.vercel.app'}.contains(host);
     if (trustedRelay) {
-      return Uri(
-        scheme: 'https',
-        host: host,
-        path: uri.path,
-      ).toString();
+      return Uri(scheme: 'https', host: host, path: uri.path).toString();
     }
     final local =
         host == 'localhost' ||
@@ -75,9 +71,10 @@ class WorkstationApi {
 
   Map<String, String> get _headers => {
     'Accept': 'application/json',
-      'Content-Type': 'application/json; charset=utf-8',
-      if (token != null && token!.isNotEmpty)
-      'Authorization': '${_remoteRelay || _remoteCloud ? 'Device' : 'Bearer'} $token',
+    'Content-Type': 'application/json; charset=utf-8',
+    if (token != null && token!.isNotEmpty)
+      'Authorization':
+          '${_remoteRelay || _remoteCloud ? 'Device' : 'Bearer'} $token',
   };
 
   Future<Map<String, dynamic>> pair(String code) async {
@@ -110,8 +107,20 @@ class WorkstationApi {
 
   Future<Map<String, dynamic>> status() => _send('GET', '/api/status');
   Future<Map<String, dynamic>> updateStatus() => _send('GET', '/api/update');
-  Future<void> action(String action) =>
-      _send('POST', '/api/action', body: {'action': action});
+  Future<void> action(String action) async {
+    if (_remoteCloud) {
+      await _sendRemote(
+        'POST',
+        '/api/action',
+        null,
+        {'action': action},
+        const Duration(seconds: 12),
+        endpoint: Uri.parse(server).replace(path: '/api/mobile-relay'),
+      );
+      return;
+    }
+    await _send('POST', '/api/action', body: {'action': action});
+  }
 
   Future<List<Map<String, dynamic>>> songs(String query) async {
     const pageSize = 200;
@@ -310,10 +319,7 @@ class WorkstationApi {
     }
     return _direct(
       method,
-      Uri.parse(server).replace(queryParameters: {
-        'action': action,
-        ...?query,
-      }),
+      Uri.parse(server).replace(queryParameters: {'action': action, ...?query}),
       body: body,
       timeout: timeout ?? Duration(seconds: method == 'POST' ? 30 : 15),
     );
@@ -324,11 +330,13 @@ class WorkstationApi {
     String path,
     Map<String, String>? query,
     Map<String, dynamic>? body,
-    Duration? timeout,
-  ) async {
+    Duration? timeout, {
+    Uri? endpoint,
+  }) async {
+    final relay = endpoint ?? Uri.parse(server);
     final submitted = await _direct(
       'POST',
-      Uri.parse(server).replace(queryParameters: {'action': 'submit'}),
+      relay.replace(queryParameters: {'action': 'submit'}),
       body: {
         'method': method,
         'path': path,
@@ -344,8 +352,7 @@ class WorkstationApi {
       await Future<void>.delayed(const Duration(milliseconds: 450));
       final result = await _direct(
         'GET',
-        Uri.parse(server)
-            .replace(queryParameters: {'action': 'result', 'id': id}),
+        relay.replace(queryParameters: {'action': 'result', 'id': id}),
         accept: const {200, 202},
         timeout: const Duration(seconds: 20),
       );
