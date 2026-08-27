@@ -274,12 +274,16 @@ class WorkstationApi {
     } on ApiException {
       rethrow;
     } on TimeoutException {
+      if (_remoteCloud) throw const ApiException('云端响应超时，请稍后重试');
       throw ApiException('连接 $server 超时，请确认电脑端工作站在线');
     } on SocketException {
+      if (_remoteCloud) throw const ApiException('无法连接云端，请检查手机网络后重试');
       throw ApiException('无法访问 $server，请保持电脑端工作站开启，并检查网络或防火墙');
     } on http.ClientException {
+      if (_remoteCloud) throw const ApiException('云端连接暂时不可用，请稍后重试');
       throw ApiException('无法访问 $server，请确认电脑端显示“手机端已启用”');
     } catch (error) {
+      if (_remoteCloud) throw ApiException('云端请求失败：${error.runtimeType}');
       throw ApiException('连接电脑端失败：${error.runtimeType}');
     }
   }
