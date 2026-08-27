@@ -37,7 +37,7 @@ dependencies:
   http: ^1.6.0
   # 9.2.4 keeps the same token read/write API while supporting the stable
   # Android 36 toolchain and a wider range of existing devices.
-  flutter_secure_storage: 9.2.4
+  flutter_secure_storage: 10.3.1
   package_info_plus: 9.0.1
   file_picker: ^10.3.10
   path_provider: ^2.1.5
