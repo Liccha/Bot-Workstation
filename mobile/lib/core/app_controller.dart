@@ -18,13 +18,21 @@ class AppController extends ChangeNotifier {
   final MobileUpdateService mobileUpdates;
 
   bool get connected => api != null;
+  bool get cloudIndependent => api != null && Uri.parse(api!.server).path == '/api/mobile-data';
 
   Future<void> restore() async {
     checkMobileUpdate();
     try {
       final session = await _store.load();
       if (session != null) {
-        api = WorkstationApi(session.server, token: session.token);
+        final saved = Uri.tryParse(session.server);
+        final independentServer = saved?.path == '/api/mobile-relay'
+            ? saved!.replace(path: '/api/mobile-data', query: null).toString()
+            : session.server;
+        api = WorkstationApi(independentServer, token: session.token);
+        if (independentServer != session.server) {
+          await _store.save(independentServer, session.token);
+        }
         // A paired device account is durable. A slow or offline workstation must
         // not discard it or send the user back to the pairing screen.
         booting = false;
@@ -64,7 +72,9 @@ class AppController extends ChangeNotifier {
       final remoteToken = paired['remoteToken']?.toString() ?? '';
       if (remoteServer.isNotEmpty && remoteToken.isNotEmpty) {
         final local = next;
-        next = WorkstationApi(remoteServer, token: remoteToken);
+        final relay = Uri.parse(remoteServer);
+        final cloud = relay.replace(path: '/api/mobile-data', query: null);
+        next = WorkstationApi(cloud.toString(), token: remoteToken);
         local.close();
       }
       await _store.save(next.server, next.token!);

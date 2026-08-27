@@ -59,8 +59,8 @@ class _BotWorkstationAppState extends State<BotWorkstationApp> {
           title: Text('发现新版本 ${release.version}'),
           content: Text(
             release.notes.isEmpty
-                ? '是否打开官方安装包下载页？'
-                : '${release.notes}\n\n是否打开官方安装包下载页？',
+                ? '将在应用内下载并校验更新包，然后交由 Android 安装。'
+                : '${release.notes}\n\n将在应用内下载并校验更新包，然后交由 Android 安装。',
           ),
           actions: [
             TextButton(
@@ -75,14 +75,46 @@ class _BotWorkstationAppState extends State<BotWorkstationApp> {
         ),
       );
       if (install == true) {
+        final progress = ValueNotifier<double>(0);
+        if (dialogContext.mounted) {
+          unawaited(showDialog<void>(
+            context: dialogContext,
+            barrierDismissible: false,
+            builder: (context) => PopScope(
+              canPop: false,
+              child: AlertDialog(
+                title: const Text('正在下载更新'),
+                content: ValueListenableBuilder<double>(
+                  valueListenable: progress,
+                  builder: (context, value, _) => Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      LinearProgressIndicator(value: value > 0 ? value.clamp(0, 1) : null),
+                      const SizedBox(height: 12),
+                      Text(value > 0 ? '${(value * 100).clamp(0, 100).toStringAsFixed(0)}%' : '正在连接版本服务…'),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ));
+        }
         try {
-          await widget.controller.mobileUpdates.openInstaller(release);
+          await widget.controller.mobileUpdates.downloadAndInstall(
+            release,
+            onProgress: (value) => progress.value = value,
+          );
         } catch (error) {
           if (mounted) {
             messengerKey.currentState?.showSnackBar(
               SnackBar(content: Text(error.toString())),
             );
           }
+        } finally {
+          progress.dispose();
+          final current = navigatorKey.currentState;
+          if (current != null && current.canPop()) current.pop();
         }
       }
     });

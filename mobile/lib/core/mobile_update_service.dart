@@ -1,8 +1,12 @@
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:crypto/crypto.dart';
+import 'package:convert/convert.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:path_provider/path_provider.dart';
 
 class MobileRelease {
   const MobileRelease({
@@ -10,12 +14,14 @@ class MobileRelease {
     required this.url,
     required this.sha256,
     required this.notes,
+    required this.size,
   });
 
   final String version;
   final Uri url;
   final String sha256;
   final String notes;
+  final int size;
 }
 
 class MobileUpdateService {
@@ -34,13 +40,16 @@ class MobileUpdateService {
     final version = value['version']?.toString().trim() ?? '';
     final url = Uri.tryParse(value['url']?.toString() ?? '');
     final sha256 = value['sha256']?.toString().toLowerCase() ?? '';
+    final size = int.tryParse('${value['size'] ?? ''}') ?? -1;
     if (!RegExp(r'^\d+(?:\.\d+){1,3}$').hasMatch(version) ||
         url == null ||
         url.scheme != 'https' ||
         url.host != 'assets.teacharm.moe' ||
         !url.path.startsWith('/bot-workstation/mobile/') ||
         !url.path.toLowerCase().endsWith('.apk') ||
-        !RegExp(r'^[0-9a-f]{64}$').hasMatch(sha256)) {
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(sha256) ||
+        size < 1 ||
+        size > 512 * 1024 * 1024) {
       return null;
     }
     final current = (await PackageInfo.fromPlatform()).version;
@@ -50,13 +59,54 @@ class MobileUpdateService {
       url: url,
       sha256: sha256,
       notes: value['notes']?.toString().trim() ?? '',
+      size: size,
     );
   }
 
-  Future<void> openInstaller(MobileRelease release) async {
-    if (!await launchUrl(release.url, mode: LaunchMode.externalApplication)) {
-      throw StateError('无法打开安全下载地址');
+  Future<void> downloadAndInstall(
+    MobileRelease release, {
+    void Function(double progress)? onProgress,
+  }) async {
+    final request = http.Request('GET', release.url)
+      ..headers['Accept'] = 'application/vnd.android.package-archive';
+    final response = await request.send().timeout(const Duration(seconds: 20));
+    if (response.statusCode != 200) {
+      throw StateError('更新包下载失败（${response.statusCode}）');
     }
+    final declared = response.contentLength;
+    if (declared != null && declared != release.size) {
+      throw StateError('更新包大小与版本清单不一致');
+    }
+    final directory = await getTemporaryDirectory();
+    final output = File('${directory.path}/BotWorkstation-Mobile-${release.version}.apk');
+    final sink = output.openWrite();
+    final digest = AccumulatorSink<Digest>();
+    final hashSink = sha256.startChunkedConversion(digest);
+    var received = 0;
+    try {
+      await for (final chunk in response.stream.timeout(const Duration(seconds: 45))) {
+        received += chunk.length;
+        if (received > release.size || received > 512 * 1024 * 1024) {
+          throw StateError('更新包大小异常');
+        }
+        sink.add(chunk);
+        hashSink.add(chunk);
+        onProgress?.call(received / release.size);
+      }
+      await sink.flush();
+      await sink.close();
+      hashSink.close();
+      if (received != release.size || digest.events.single.toString() != release.sha256) {
+        await output.delete().catchError((_) => output);
+        throw StateError('更新包完整性校验失败，已拒绝安装');
+      }
+    } catch (_) {
+      await sink.close().catchError((_) {});
+      if (await output.exists()) await output.delete();
+      rethrow;
+    }
+    await const MethodChannel('moe.teacharm.bot_workstation/update')
+        .invokeMethod<void>('installApk', {'path': output.path});
   }
 
   static int compareVersions(String left, String right) {

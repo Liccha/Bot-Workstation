@@ -167,7 +167,7 @@ class _MoreScreen extends StatelessWidget {
         ),
       ),
       const SizedBox(height: 14),
-      if (controller.update['available'] == true)
+      if (!controller.cloudIndependent && controller.update['available'] == true)
         Card(
           child: Padding(
             padding: const EdgeInsets.all(18),

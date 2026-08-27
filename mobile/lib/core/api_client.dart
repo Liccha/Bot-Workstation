@@ -22,6 +22,7 @@ class WorkstationApi {
   final http.Client _client;
 
   bool get _remoteRelay => Uri.parse(server).path == '/api/mobile-relay';
+  bool get _remoteCloud => Uri.parse(server).path == '/api/mobile-data';
 
   static String normalizeServer(String raw) {
     var value = raw.trim();
@@ -36,14 +37,14 @@ class WorkstationApi {
     final host = uri.host.toLowerCase();
     final trustedRelay =
         uri.scheme == 'https' &&
-        uri.path == '/api/mobile-relay' &&
+        {'/api/mobile-relay', '/api/mobile-data'}.contains(uri.path) &&
         !uri.hasPort &&
         {'editor.teacharm.moe', 'bot-editor.vercel.app'}.contains(host);
     if (trustedRelay) {
       return Uri(
         scheme: 'https',
         host: host,
-        path: '/api/mobile-relay',
+        path: uri.path,
       ).toString();
     }
     final local =
@@ -74,9 +75,9 @@ class WorkstationApi {
 
   Map<String, String> get _headers => {
     'Accept': 'application/json',
-    'Content-Type': 'application/json; charset=utf-8',
-    if (token != null && token!.isNotEmpty)
-      'Authorization': '${_remoteRelay ? 'Device' : 'Bearer'} $token',
+      'Content-Type': 'application/json; charset=utf-8',
+      if (token != null && token!.isNotEmpty)
+      'Authorization': '${_remoteRelay || _remoteCloud ? 'Device' : 'Bearer'} $token',
   };
 
   Future<Map<String, dynamic>> pair(String code) async {
@@ -170,7 +171,7 @@ class WorkstationApi {
     required String filename,
     required List<int> bytes,
   }) async {
-    if (!_remoteRelay) {
+    if (!_remoteCloud) {
       throw const ApiException('资源上传需要使用长期设备账号，请在电脑旁重新配对一次');
     }
     final dot = filename.lastIndexOf('.');
@@ -260,6 +261,9 @@ class WorkstationApi {
       if (_remoteRelay) {
         return await _sendRemote(method, path, query, body, timeout);
       }
+      if (_remoteCloud) {
+        return await _sendCloud(method, path, query, body, timeout);
+      }
       final uri = _uri(path, query);
       return await _direct(
         method,
@@ -278,6 +282,37 @@ class WorkstationApi {
     } catch (error) {
       throw ApiException('连接电脑端失败：${error.runtimeType}');
     }
+  }
+
+  Future<Map<String, dynamic>> _sendCloud(
+    String method,
+    String path,
+    Map<String, String>? query,
+    Map<String, dynamic>? body,
+    Duration? timeout,
+  ) {
+    const actions = <String, String>{
+      'GET /api/status': 'status',
+      'GET /api/update': 'status',
+      'GET /api/songs': 'songs',
+      'GET /api/stable': 'stable',
+      'POST /api/song': 'song',
+      'POST /api/stable': 'stable',
+      'POST /api/song-asset': 'song-asset',
+    };
+    final action = actions['$method $path'];
+    if (action == null) {
+      throw const ApiException('此操作依赖本机进程，云端独立模式下不可用');
+    }
+    return _direct(
+      method,
+      Uri.parse(server).replace(queryParameters: {
+        'action': action,
+        ...?query,
+      }),
+      body: body,
+      timeout: timeout ?? Duration(seconds: method == 'POST' ? 30 : 15),
+    );
   }
 
   Future<Map<String, dynamic>> _sendRemote(

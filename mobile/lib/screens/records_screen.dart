@@ -357,7 +357,7 @@ class _RecordEditorState extends State<_RecordEditor> {
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(image ? '歌曲图片已压缩并发布' : '歌曲音频已压缩并发布')),
+          SnackBar(content: Text(image ? '歌曲图片已安全保存至云端' : '歌曲音频已安全保存至云端')),
         );
       }
     } catch (error) {

@@ -3,8 +3,9 @@ const { getStore } = require('./_lib/storage');
 const security = require('./_lib/security');
 const emergency = require('./_lib/emergency-lock');
 const repo = require('./_lib/repository');
+const mobileAuth = require('./_lib/mobile-auth');
 
-const DEVICES_KEY = 'security/mobile-devices.json';
+const DEVICES_KEY = mobileAuth.DEVICES_KEY;
 const INBOX_PREFIX = 'mobile-relay/inboxes/';
 const CLAIM_PREFIX = 'mobile-relay/claims/';
 const REQUEST_TTL_MS = 30 * 60 * 1000;
@@ -40,8 +41,8 @@ function unauthorized() { const error = new Error('not authorized'); error.statu
 function notFound() { const error = new Error('not found'); error.statusCode = 404; return error; }
 function conflict(message = 'conflict') { const error = new Error(message); error.statusCode = 409; return error; }
 function rateLimited() { const error = new Error('rate limited'); error.statusCode = 429; return error; }
-function hashSecret(secret) { return crypto.createHash('sha256').update(String(secret || '')).digest('hex'); }
-function safeId(value) { return /^[a-f0-9-]{36}$/.test(String(value || '')) ? String(value) : ''; }
+const hashSecret = mobileAuth.hashSecret;
+const safeId = mobileAuth.safeId;
 
 async function readJson(key, fallback) {
   const object = await getStore().get(key);
@@ -51,8 +52,7 @@ async function readJson(key, fallback) {
 }
 
 async function readDevices() {
-  const value = await readJson(DEVICES_KEY, { schema: 1, devices: [] });
-  return { schema: 1, devices: Array.isArray(value.devices) ? value.devices : [] };
+  return mobileAuth.readDevices();
 }
 
 function slotKey(deviceId, index) { return `${INBOX_PREFIX}${deviceId}/${index}.json`; }
@@ -115,20 +115,7 @@ async function placeInSlot(item) {
   });
 }
 
-async function deviceFromRequest(req) {
-  const header = String(req.headers.authorization || '');
-  if (!header.startsWith('Device ')) return null;
-  const token = header.slice(7).trim();
-  const split = token.indexOf('.');
-  if (split < 1) return null;
-  const id = safeId(token.slice(0, split));
-  const secret = token.slice(split + 1);
-  if (!id || !/^[A-Za-z0-9_-]{32,128}$/.test(secret)) return null;
-  const document = await readDevices();
-  const device = document.devices.find(item => item.id === id && item.status !== 'revoked');
-  if (!device || !security.safeEqual(device.secretHash, hashSecret(secret))) return null;
-  return device;
-}
+const deviceFromRequest = mobileAuth.deviceFromRequest;
 
 function cleanName(value) {
   const text = String(value || '手机设备').normalize('NFC').replace(/[\x00-\x1f\x7f]/g, '').trim();

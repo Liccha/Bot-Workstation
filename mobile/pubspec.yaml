@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.5+6
+version: 1.1.0+7
 
 environment:
   sdk: ^3.13.1
@@ -39,8 +39,10 @@ dependencies:
   # Android 36 toolchain and a wider range of existing devices.
   flutter_secure_storage: 9.2.4
   package_info_plus: 9.0.1
-  url_launcher: ^6.3.2
   file_picker: ^10.3.10
+  path_provider: ^2.1.5
+  crypto: ^3.0.7
+  convert: ^3.1.2
 
 dev_dependencies:
   flutter_test:
@@ -67,10 +69,10 @@ flutter:
   uses-material-design: true
   assets:
     - assets/app_icon.png
-
-  # Production builds bundle the licensed OppoSans font. It is intentionally
-  # omitted from this public source tree; Flutter falls back to the platform
-  # sans-serif family when that private asset is unavailable.
+  fonts:
+    - family: OppoSans
+      fonts:
+        - asset: assets/fonts/OppoSans.ttf
 
   # To add assets to your application, add an assets section, like this:
   # assets:

@@ -14,6 +14,9 @@ class DashboardScreen extends StatelessWidget {
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(18, 8, 18, 28),
       children: [
+        if (controller.cloudIndependent) ...[
+          _CloudCard(controller: controller),
+        ] else ...[
         _ServiceCard(
           name: 'SongBot',
           detail: '群消息、公告调度、猜歌与接口服务',
@@ -31,6 +34,7 @@ class DashboardScreen extends StatelessWidget {
           onStart: () => _run(context, controller.action('napcat.start')),
           onStop: () => _run(context, controller.action('napcat.stop')),
         ),
+        ],
       ],
     ),
   );
@@ -49,6 +53,65 @@ class DashboardScreen extends StatelessWidget {
       }
     }
   }
+}
+
+class _CloudCard extends StatelessWidget {
+  const _CloudCard({required this.controller});
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final songs = controller.status['songs'] as Map?;
+    final stable = controller.status['stable'] as Map?;
+    final locked = controller.status['writeLocked'] == true;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.cloud_done_rounded, color: AppTheme.accent),
+                const SizedBox(width: 12),
+                Expanded(child: Text('云端独立运行', style: Theme.of(context).textTheme.titleLarge)),
+                Text(locked ? '写入已阻断' : '可读写', style: TextStyle(
+                  color: locked ? const Color(0xFFE29021) : const Color(0xFF13A16D),
+                  fontWeight: FontWeight.w600,
+                )),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text('无需电脑在线，也不受 Wi-Fi、流量或 VPN 切换影响。', style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(height: 18),
+            Row(
+              children: [
+                Expanded(child: _Count(label: '歌曲', value: '${songs?['total'] ?? 0}')),
+                const SizedBox(width: 12),
+                Expanded(child: _Count(label: 'Stable', value: '${stable?['total'] ?? 0}')),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Count extends StatelessWidget {
+  const _Count({required this.label, required this.value});
+  final String label;
+  final String value;
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+    decoration: BoxDecoration(color: const Color(0xFFF8F3F8), borderRadius: BorderRadius.circular(14)),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(value, style: Theme.of(context).textTheme.titleLarge),
+      const SizedBox(height: 3),
+      Text(label, style: Theme.of(context).textTheme.bodySmall),
+    ]),
+  );
 }
 
 class _ServiceCard extends StatelessWidget {

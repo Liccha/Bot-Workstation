@@ -142,5 +142,6 @@ class _NewReleaseService extends MobileUpdateService {
     ),
     sha256: ''.padLeft(64, '0'),
     notes: '测试更新',
+    size: 1024,
   );
 }
