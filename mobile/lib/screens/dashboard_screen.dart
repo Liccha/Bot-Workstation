@@ -21,7 +21,7 @@ class DashboardScreen extends StatelessWidget {
         _ServiceCard(
           name: 'SongBot',
           detail: controller.cloudIndependent
-              ? '群消息、公告调度、猜歌与接口服务 · 电脑在线时可远程控制'
+              ? '群消息、公告调度、猜歌与接口服务 · 由常驻后台代理控制'
               : '群消息、公告调度、猜歌与接口服务',
           state: controller.status['songBot']?.toString() ?? 'unknown',
           icon: Icons.smart_toy_outlined,
@@ -32,7 +32,7 @@ class DashboardScreen extends StatelessWidget {
         _ServiceCard(
           name: 'NapCat',
           detail: controller.cloudIndependent
-              ? 'QQ 连接与 OneBot 消息通道 · 电脑在线时可远程控制'
+              ? 'QQ 连接与 OneBot 消息通道 · 由常驻后台代理控制'
               : 'QQ 连接与 OneBot 消息通道',
           state: controller.status['napCat']?.toString() ?? 'unknown',
           icon: Icons.forum_outlined,
@@ -50,7 +50,7 @@ class DashboardScreen extends StatelessWidget {
       await task;
       if (context.mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('操作已提交')));
+            .showSnackBar(const SnackBar(content: Text('操作已执行')));
       }
     } catch (error) {
       if (context.mounted) {
@@ -79,7 +79,11 @@ class _AutomationCard extends StatelessWidget {
         onChanged: online && !controller.busy
             ? (value) => DashboardScreen._run(
                 context,
-                controller.action(value ? 'daily.automation.enable' : 'daily.automation.disable'),
+                controller.action(
+                  value
+                      ? 'daily.automation.enable'
+                      : 'daily.automation.disable',
+                ),
               )
             : null,
       ),
@@ -187,17 +191,18 @@ class _ServiceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final running = state == 'running';
     final degraded = state == 'degraded';
-    final remote = state == 'remote';
-    final label = remote
-        ? '远程控制'
+    final offline = state == 'offline';
+    final unknown = state == 'unknown';
+    final label = offline
+        ? '后台代理离线'
+        : unknown
+        ? '状态未知'
         : running
         ? '已启用'
         : degraded
         ? '连接异常'
         : '未启用';
-    final color = remote
-        ? AppTheme.violet
-        : running
+    final color = running
         ? const Color(0xFF13A16D)
         : degraded
         ? const Color(0xFFE29021)
@@ -266,14 +271,16 @@ class _ServiceCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: FilledButton.tonal(
-                    onPressed: running && !remote ? null : onStart,
+                    onPressed: offline || unknown || running ? null : onStart,
                     child: const Text('启用'),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: remote || running || degraded ? onStop : null,
+                    onPressed: offline || unknown || (!running && !degraded)
+                        ? null
+                        : onStop,
                     child: const Text('停用'),
                   ),
                 ),

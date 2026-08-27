@@ -36,6 +36,12 @@ module.exports = async function handler(req, res) {
     if ((action === 'songs' || action === 'stable') && req.method === 'GET') {
       return json(res, 200, await library.list(action, query(req, 'q'), query(req, 'offset'), query(req, 'limit')));
     }
+    if (action === 'changes' && req.method === 'GET') {
+      if (!desktop) throw unauthorized();
+      const dataset = String(query(req, 'dataset') || '');
+      if (dataset !== 'songs' && dataset !== 'stable') badRequest();
+      return json(res, 200, await library.changes(dataset, query(req, 'after'), query(req, 'limit')));
+    }
     if ((action === 'song' || action === 'stable') && req.method === 'POST') {
       await emergency.assertWriteAllowed();
       const input = body(req);

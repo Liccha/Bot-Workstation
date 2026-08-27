@@ -82,7 +82,7 @@ void main() {
   });
 
   test(
-    'cloud-independent account can relay service controls when PC is online',
+    'cloud-independent account can relay service controls to the resident agent',
     () async {
       final requests = <http.Request>[];
       final api = WorkstationApi(
@@ -109,6 +109,42 @@ void main() {
       expect(requests.length, 2);
     },
   );
+
+  test('cloud-independent refresh reads cached presence without queueing a command', () async {
+    final requests = <http.Request>[];
+    final controller = AppController(_EmptySessionStore())
+      ..api = WorkstationApi(
+        'https://editor.teacharm.moe/api/mobile-data',
+        token: 'device-id.device-secret',
+        client: MockClient((request) async {
+          requests.add(request);
+          if (request.url.path == '/api/mobile-data') {
+            return http.Response(
+              '{"songs":{"total":1272},"stable":{"total":142},"writeLocked":false}',
+              200,
+            );
+          }
+          if (request.url.queryParameters['action'] == 'presence') {
+            return http.Response(
+              '{"workstationOnline":true,"songBot":"running","napCat":"stopped","dailyAutomation":false}',
+              200,
+            );
+          }
+          return http.Response('{"error":"unexpected request"}', 500);
+        }),
+      );
+    final stopwatch = Stopwatch()..start();
+    await controller.refresh();
+    stopwatch.stop();
+    expect(controller.status['songBot'], 'running');
+    expect(controller.status['napCat'], 'stopped');
+    expect(controller.status['dailyAutomation'], isFalse);
+    expect(stopwatch.elapsed, lessThan(const Duration(seconds: 1)));
+    expect(
+      requests.where((item) => item.url.queryParameters['action'] == 'submit'),
+      isEmpty,
+    );
+  });
 
   test(
     'pairing preflights the LAN endpoint and normalizes the displayed code',
@@ -169,6 +205,10 @@ void main() {
       ..status = {
         'songs': {'total': 1272},
         'stable': {'total': 142},
+        'songBot': 'running',
+        'napCat': 'stopped',
+        'workstationOnline': true,
+        'dailyAutomation': false,
       };
     await tester.pumpWidget(
       MaterialApp(home: DashboardScreen(controller: controller)),
@@ -176,8 +216,22 @@ void main() {
     expect(find.text('云端独立运行'), findsOneWidget);
     expect(find.text('SongBot'), findsOneWidget);
     expect(find.text('NapCat'), findsOneWidget);
+    expect(find.text('每日歌曲与竞猜'), findsOneWidget);
+    expect(find.text('当前已关闭'), findsOneWidget);
     expect(find.text('启用'), findsNWidgets(2));
     expect(find.text('停用'), findsNWidgets(2));
+    expect(find.text('已启用'), findsOneWidget);
+    expect(find.text('未启用'), findsOneWidget);
+    final startButtons = tester
+        .widgetList<FilledButton>(find.widgetWithText(FilledButton, '启用'))
+        .toList();
+    final stopButtons = tester
+        .widgetList<OutlinedButton>(find.widgetWithText(OutlinedButton, '停用'))
+        .toList();
+    expect(startButtons[0].onPressed, isNull);
+    expect(startButtons[1].onPressed, isNotNull);
+    expect(stopButtons[0].onPressed, isNotNull);
+    expect(stopButtons[1].onPressed, isNull);
   });
 }
 

@@ -106,8 +106,16 @@ public final class MobileControlServer implements AutoCloseable {
             Thread thread = new Thread(task, "bot-mobile-control"); thread.setDaemon(true); return thread;
         });
         server.setExecutor(executor); server.start();
-        if (relay != null) relay.start(this::executeRelay);
         log.info("手机端", "局域网控制已启用，端口 " + port);
+    }
+
+    /** Keeps already paired devices available even when LAN pairing is disabled. */
+    public synchronized void startCloudRelay() {
+        if (relay != null) relay.start(this::executeRelay);
+    }
+
+    public synchronized boolean isCloudRelayRunning() {
+        return relay != null && relay.isRunning();
     }
 
     public synchronized boolean isRunning() { return server != null; }
@@ -168,13 +176,7 @@ public final class MobileControlServer implements AutoCloseable {
 
     private void status(HttpExchange exchange) throws IOException {
         if (!authorized(exchange)) { respond(exchange, 401, jsonError("请先配对")); return; }
-        JSONObject value = new JSONObject()
-            .put("songBot", services.songBotState().name().toLowerCase())
-            .put("napCat", services.napCatState().name().toLowerCase())
-            .put("dailyAutomation", operations.dailyAutomationEnabled())
-            .put("workstationOnline", true)
-            .put("editor", paths.editorUrl);
-        respond(exchange, 200, value.toString());
+        respond(exchange, 200, serviceStatus().toString());
     }
 
     private void update(HttpExchange exchange) throws IOException {
@@ -193,21 +195,7 @@ public final class MobileControlServer implements AutoCloseable {
         if (!"POST".equals(exchange.getRequestMethod())) { respond(exchange, 405, jsonError("仅支持 POST")); return; }
         String action = bodyJson(exchange).optString("action", "");
         try {
-            switch (action) {
-                case "songbot.start": services.startSongBot(); break;
-                case "songbot.stop": services.stopSongBot(); break;
-                case "napcat.start": services.startNapCat(); break;
-                case "napcat.stop": services.stopNapCat(); break;
-                case "daily.automation.enable": operations.setDailyAutomationEnabled(true); break;
-                case "daily.automation.disable": operations.setDailyAutomationEnabled(false); break;
-                case "open.library": openModule.accept("library"); break;
-                case "open.mcz": openModule.accept("mcz"); break;
-                case "open.stable": openModule.accept("stable"); break;
-                case "open.admin": openModule.accept("announcements"); break;
-                case "open.operations": openModule.accept("tools"); break;
-                case "update.install": startMobileUpdate(); break;
-                default: respond(exchange, 400, jsonError("未知操作")); return;
-            }
+            if (!performAction(action, true)) { respond(exchange, 400, jsonError("未知操作")); return; }
             log.info("手机端", "已执行 " + action);
             respond(exchange, 200, new JSONObject().put("ok", true).toString());
         } catch (Exception error) {
@@ -311,49 +299,91 @@ public final class MobileControlServer implements AutoCloseable {
         }
     }
 
-    private CloudMobileRelay.RelayResponse executeRelay(JSONObject payload) throws Exception {
+    private CloudMobileRelay.RelayResponse executeRelay(JSONObject payload) {
         String method = payload.optString("method", "").toUpperCase(java.util.Locale.ROOT);
         String path = payload.optString("path", "");
         String key = method + " " + path;
         Set<String> allowed = Set.of("GET /api/status", "GET /api/update", "GET /api/songs", "GET /api/stable",
             "POST /api/song", "POST /api/stable", "POST /api/action", "POST /api/song-asset");
         if (!allowed.contains(key)) return new CloudMobileRelay.RelayResponse(400, new JSONObject().put("error", "未知操作"));
-        JSONObject body = payload.optJSONObject("body");
-        if ("POST /api/action".equals(key)) {
-            String actionName = body == null ? "" : body.optString("action", "");
-            if (!Set.of("songbot.start", "songbot.stop", "napcat.start", "napcat.stop", "update.install",
-                "daily.automation.enable", "daily.automation.disable").contains(actionName))
-                return new CloudMobileRelay.RelayResponse(400, new JSONObject().put("error", "未知操作"));
-        }
-        StringBuilder url = new StringBuilder("http://127.0.0.1:").append(port).append(path);
-        JSONObject query = payload.optJSONObject("query");
-        if (query != null && !query.isEmpty()) {
-            boolean first = true;
-            for (String name : query.keySet()) {
-                String value = query.optString(name, "");
-                url.append(first ? '?' : '&'); first = false;
-                url.append(URLEncoder.encode(name, StandardCharsets.UTF_8.name())).append('=')
-                    .append(URLEncoder.encode(value, StandardCharsets.UTF_8.name()));
+        JSONObject body = payload.optJSONObject("body"); if (body == null) body = new JSONObject();
+        JSONObject query = payload.optJSONObject("query"); if (query == null) query = new JSONObject();
+        try {
+            switch (key) {
+                case "GET /api/status":
+                    return relayResponse(200, serviceStatus());
+                case "GET /api/update": {
+                    UpdateService.ReleaseInfo release = updates.check();
+                    return relayResponse(200, release.toJson(updates.available(release)).put("updating", updating.get()));
+                }
+                case "GET /api/songs":
+                    return relayResponse(200, data.songs(query.optString("q", ""), query.optInt("offset", 0), query.optInt("limit", 100)));
+                case "GET /api/stable":
+                    return relayResponse(200, data.stable(query.optString("q", ""), query.optInt("offset", 0), query.optInt("limit", 100)));
+                case "POST /api/song": {
+                    String id = body.optString("id", "").trim();
+                    if (id.isEmpty()) return relayResponse(400, new JSONObject().put("error", "缺少歌曲 ID"));
+                    data.updateSong(id, body.optJSONObject("values") == null ? new JSONObject() : body.getJSONObject("values"));
+                    return relayResponse(200, new JSONObject().put("ok", true));
+                }
+                case "POST /api/stable": {
+                    String sid = body.optString("sid", "").trim();
+                    if (sid.isEmpty()) return relayResponse(400, new JSONObject().put("error", "缺少 Stable SID"));
+                    data.updateStable(sid, body.optJSONObject("values") == null ? new JSONObject() : body.getJSONObject("values"));
+                    return relayResponse(200, new JSONObject().put("ok", true));
+                }
+                case "POST /api/action": {
+                    String actionName = body.optString("action", "");
+                    if (!Set.of("songbot.start", "songbot.stop", "napcat.start", "napcat.stop", "update.install",
+                        "daily.automation.enable", "daily.automation.disable").contains(actionName)
+                        || !performAction(actionName, false)) return relayResponse(400, new JSONObject().put("error", "未知操作"));
+                    log.info("手机端", "已执行 " + actionName);
+                    return relayResponse(200, new JSONObject().put("ok", true));
+                }
+                case "POST /api/song-asset": {
+                    String id = body.optString("id", "").trim(); String type = body.optString("type", "").trim();
+                    String name = body.optString("name", "").trim(); long size = body.optLong("size", -1);
+                    Path saved = songAssets.downloadAndPublish(id, type, URI.create(body.optString("downloadUrl", "")), name, size);
+                    return relayResponse(200, new JSONObject().put("ok", true).put("path", saved.toString()));
+                }
+                default:
+                    return relayResponse(400, new JSONObject().put("error", "未知操作"));
             }
+        } catch (Exception error) {
+            log.error("手机端", key + " 失败：" + safeMessage(error));
+            return relayResponse(500, new JSONObject().put("error", safeMessage(error)));
         }
-        HttpURLConnection connection = (HttpURLConnection) URI.create(url.toString()).toURL().openConnection();
-        connection.setInstanceFollowRedirects(false); connection.setConnectTimeout(3000); connection.setReadTimeout(30 * 60_000);
-        connection.setRequestMethod(method); connection.setRequestProperty("Accept", "application/json");
-        connection.setRequestProperty("Authorization", "Bearer " + issueToken());
-        if ("POST".equals(method)) {
-            byte[] bytes = (body == null ? new JSONObject() : body).toString().getBytes(StandardCharsets.UTF_8);
-            connection.setDoOutput(true); connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-            connection.setFixedLengthStreamingMode(bytes.length);
-            try (OutputStream output = connection.getOutputStream()) { output.write(bytes); }
+    }
+
+    private JSONObject serviceStatus() {
+        return new JSONObject()
+            .put("songBot", services.songBotState().name().toLowerCase())
+            .put("napCat", services.napCatState().name().toLowerCase())
+            .put("dailyAutomation", operations.dailyAutomationEnabled())
+            .put("editor", paths.editorUrl)
+            .put("workstationOnline", true);
+    }
+
+    private boolean performAction(String action, boolean allowOpenModule) throws Exception {
+        switch (action) {
+            case "songbot.start": services.startSongBot(); return true;
+            case "songbot.stop": services.stopSongBot(); return true;
+            case "napcat.start": services.startNapCat(); return true;
+            case "napcat.stop": services.stopNapCat(); return true;
+            case "daily.automation.enable": operations.setDailyAutomationEnabled(true); return true;
+            case "daily.automation.disable": operations.setDailyAutomationEnabled(false); return true;
+            case "update.install": startMobileUpdate(); return true;
+            case "open.library": if (allowOpenModule) { openModule.accept("library"); return true; } return false;
+            case "open.mcz": if (allowOpenModule) { openModule.accept("mcz"); return true; } return false;
+            case "open.stable": if (allowOpenModule) { openModule.accept("stable"); return true; } return false;
+            case "open.admin": if (allowOpenModule) { openModule.accept("announcements"); return true; } return false;
+            case "open.operations": if (allowOpenModule) { openModule.accept("tools"); return true; } return false;
+            default: return false;
         }
-        int status = connection.getResponseCode();
-        InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
-        String text = stream == null ? "" : new String(readAll(stream, 2 * 1024 * 1024), StandardCharsets.UTF_8);
-        connection.disconnect();
-        JSONObject response;
-        try { response = text.isBlank() ? new JSONObject() : new JSONObject(text); }
-        catch (Exception error) { response = new JSONObject().put("error", "工作站返回了无效数据"); status = 500; }
-        return new CloudMobileRelay.RelayResponse(status, response);
+    }
+
+    private static CloudMobileRelay.RelayResponse relayResponse(int status, JSONObject body) {
+        return new CloudMobileRelay.RelayResponse(status, body);
     }
 
     private boolean authorized(HttpExchange exchange) {
@@ -474,11 +504,15 @@ public final class MobileControlServer implements AutoCloseable {
         return best == null ? "127.0.0.1" : best;
     }
 
-    @Override public synchronized void close() {
-        if (relay != null) relay.close();
+    public synchronized void stopPairing() {
         if (server != null) server.stop(0);
         if (executor != null) executor.shutdownNow();
         server = null; executor = null; pairCode = null;
         log.info("手机端", "局域网控制已停用");
+    }
+
+    @Override public synchronized void close() {
+        stopPairing();
+        if (relay != null) relay.close();
     }
 }

@@ -8,6 +8,7 @@ import com.botstation.core.UpdateService;
 import com.botstation.features.SongLibraryPanel;
 import com.botstation.features.StableWorkbookPanel;
 import com.botstation.mobile.MobileControlServer;
+import com.botstation.mobile.BackgroundAgent;
 import com.botstation.security.AdminGate;
 
 import javax.swing.BorderFactory;
@@ -104,6 +105,7 @@ public final class WorkbenchFrame extends JFrame {
     }
 
     private void startMobileCompanion() {
+        BackgroundAgent.ensureRunning(paths, log);
         try {
             mobileServer.start();
         } catch (Exception error) {

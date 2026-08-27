@@ -54,6 +54,18 @@ test('paired device reads and edits cloud data with no desktop poll', async () =
 
   const updated = await call(data, 'POST', 'song', { headers, body: { id: '3', values: { song_name: '离线电脑也能修改', id: '999' } } });
   assert.equal(updated.status, 200);
+  const changes = await call(data, 'GET', 'changes', {
+    headers: desktop,
+    query: { dataset: 'songs', after: '1', limit: '100' }
+  });
+  assert.equal(changes.status, 200, 'workstation agent must be able to pull cloud edits');
+  assert.equal(changes.body.items.length, 1);
+  assert.equal(changes.body.items[0].id, '3');
+  assert.equal(changes.body.items[0].values.song_name, '离线电脑也能修改');
+  assert.equal(changes.body.revision, updated.body.revision);
+  assert.equal((await call(data, 'GET', 'changes', {
+    headers, query: { dataset: 'songs', after: '1' }
+  })).status, 401, 'change feed must remain workstation-only');
   const after = await call(data, 'GET', 'songs', { headers, query: { q: '离线电脑', offset: '0', limit: '200' } });
   assert.equal(after.body.items[0].id, '3');
   assert.equal(after.body.items[0].song_name, '离线电脑也能修改');

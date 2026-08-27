@@ -76,6 +76,7 @@ final class CloudMobileRelay implements AutoCloseable {
     }
 
     String endpoint() { return endpoint.toString(); }
+    boolean isRunning() { return running.get(); }
 
     JSONObject registerDevice(String name) throws IOException {
         return request("POST", "register-device", new JSONObject().put("name", name == null || name.isBlank() ? "手机设备" : name), true);

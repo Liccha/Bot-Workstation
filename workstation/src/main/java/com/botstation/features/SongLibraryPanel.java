@@ -30,6 +30,7 @@ import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.awt.Window;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -42,6 +43,7 @@ public final class SongLibraryPanel extends JPanel {
         "album_date", "album_image_path", "song_nickname", "song_nickname2", "song_nickname3",
         "song_nickname4", "song_nickname5", "song_nickname6", "artist_nickname");
     private final SongLibraryRepository repository;
+    private final Path database;
     private final LogBus log;
     private final TaskRunner tasks;
     private final SongAssetService assets;
@@ -50,10 +52,13 @@ public final class SongLibraryPanel extends JPanel {
     private final JLabel count = UiKit.muted("尚未加载");
     private SongLibraryRepository.Snapshot snapshot;
     private List<String> visibleColumns = new ArrayList<>();
+    private boolean loading;
+    private long knownDatabaseStamp;
 
     public SongLibraryPanel(BotPaths paths, LogBus log, TaskRunner tasks) {
         super(new BorderLayout(0, 18));
-        this.repository = new SongLibraryRepository(paths.songDatabase); this.log = log; this.tasks = tasks;
+        this.database = paths.songDatabase;
+        this.repository = new SongLibraryRepository(database); this.log = log; this.tasks = tasks;
         this.assets = new SongAssetService(paths, log);
         setBackground(DesignTokens.PAPER); setBorder(BorderFactory.createEmptyBorder(24, 26, 20, 26));
         JButton reload = UiKit.button("重新读取"); reload.addActionListener(event -> reload());
@@ -67,13 +72,32 @@ public final class SongLibraryPanel extends JPanel {
         toolbar.add(search, BorderLayout.CENTER); toolbar.add(UiKit.flow(count, edit), BorderLayout.EAST);
         main.add(toolbar, BorderLayout.NORTH); main.add(UiKit.tableScroll(table), BorderLayout.CENTER);
         add(main, BorderLayout.CENTER); reload();
+        javax.swing.Timer cloudRefresh = new javax.swing.Timer(2_500, event -> {
+            if (!loading && isShowing() && databaseStamp() > knownDatabaseStamp) reload();
+        });
+        cloudRefresh.setRepeats(true);
+        cloudRefresh.start();
     }
 
     private void reload() {
+        if (loading) return;
+        loading = true;
         setBusy(true, "正在读取…");
         tasks.run(repository::load, loaded -> {
-            snapshot = loaded; populate(); setBusy(false, loaded.rows.size() + " 首歌曲");
-        }, error -> { setBusy(false, "读取失败"); showError("无法读取曲库", error); });
+            snapshot = loaded; knownDatabaseStamp = databaseStamp(); populate();
+            loading = false; setBusy(false, loaded.rows.size() + " 首歌曲");
+        }, error -> { loading = false; setBusy(false, "读取失败"); showError("无法读取曲库", error); });
+    }
+
+    private long databaseStamp() {
+        long stamp = lastModified(database);
+        Path wal = database.resolveSibling(database.getFileName() + "-wal");
+        return Math.max(stamp, lastModified(wal));
+    }
+
+    private static long lastModified(Path path) {
+        try { return Files.isRegularFile(path) ? Files.getLastModifiedTime(path).toMillis() : 0L; }
+        catch (Exception ignored) { return 0L; }
     }
 
     private void populate() {

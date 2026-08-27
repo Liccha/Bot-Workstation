@@ -114,9 +114,13 @@ class WorkstationApi {
         path: '/api/mobile-relay',
         queryParameters: const {'action': 'presence'},
       ),
-      timeout: const Duration(seconds: 1),
+      // Vercel cold starts and mobile carrier DNS can exceed one second even
+      // when the resident Windows agent is healthy. Do not turn latency into
+      // a false "offline" state.
+      timeout: const Duration(seconds: 5),
     );
   }
+
   Future<Map<String, dynamic>> updateStatus() => _send('GET', '/api/update');
   Future<void> action(String action) async {
     if (_remoteCloud) {
@@ -125,7 +129,7 @@ class WorkstationApi {
         '/api/action',
         null,
         {'action': action},
-        const Duration(seconds: 12),
+        const Duration(seconds: 25),
         endpoint: Uri.parse(server).replace(path: '/api/mobile-relay'),
       );
       return;

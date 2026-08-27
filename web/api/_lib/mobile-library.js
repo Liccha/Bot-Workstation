@@ -6,6 +6,7 @@ const DATASETS = {
   songs: { key: 'mobile-library/songs/current.json', id: 'id', maxItems: 5000 },
   stable: { key: 'mobile-library/stable/current.json', id: 'sid', maxItems: 5000 }
 };
+const MAX_CHANGE_LOG = 4000;
 const caches = new Map();
 
 function now() { return new Date().toISOString(); }
@@ -66,7 +67,7 @@ async function bootstrap(dataset, raw, actor) {
     const idColumn = columns.find(column => column.toLowerCase() === definition.id);
     if (!idColumn) throw error(400, `missing ${definition.id}`);
     const items = cleanItems(raw.items, columns, dataset);
-    const document = { schema: 1, dataset, revision: 1, columns, items, updatedAt: now() };
+    const document = { schema: 2, dataset, revision: 1, columns, items, changes: [], updatedAt: now() };
     const bytes = Buffer.from(JSON.stringify(document));
     await getStore().put(`mobile-library/${dataset}/baseline-1.json`, bytes, { forbidOverwrite: true });
     await getStore().put(definition.key, bytes, { forbidOverwrite: true });
@@ -91,6 +92,28 @@ function listDocument(document, query, requestedOffset, requestedLimit) {
 
 async function list(dataset, query, offset, limit) {
   return listDocument(await read(dataset), query, offset, limit);
+}
+
+async function reconstructChanges(dataset, document) {
+  const definition = spec(dataset);
+  const baselineObject = await getStore().get(`mobile-library/${dataset}/baseline-1.json`);
+  if (!baselineObject) throw error(409, 'baseline unavailable');
+  const baseline = JSON.parse(baselineObject.body.toString('utf8'));
+  const idColumn = document.columns.find(column => column.toLowerCase() === definition.id);
+  const baselineById = new Map((baseline.items || []).map(item => [String(item[idColumn] || '').trim(), item]));
+  const revision = Number(document.revision || 0);
+  const reconstructed = [];
+  for (const item of document.items) {
+    const id = String(item[idColumn] || '').trim();
+    const original = baselineById.get(id) || {};
+    const values = {};
+    for (const column of document.columns) {
+      if (column.toLowerCase() === definition.id) continue;
+      if (String(item[column] || '') !== String(original[column] || '')) values[column] = String(item[column] || '');
+    }
+    if (Object.keys(values).length > 0) reconstructed.push({ revision, id, values, reconstructed: true });
+  }
+  return reconstructed;
 }
 
 async function update(dataset, rawId, rawValues, actor) {
@@ -121,6 +144,17 @@ async function update(dataset, rawId, rawValues, actor) {
     document.updatedAt = now();
     const change = { schema: 1, dataset, revision: document.revision, id, values, before,
       at: document.updatedAt, actor: { kind: actor.kind, id: actor.id || '' } };
+    if (!Array.isArray(document.changes)) {
+      // Upgrade an existing v1 snapshot without losing edits made before the
+      // background agent/change feed was introduced.
+      document.changes = await reconstructChanges(dataset, document);
+    } else {
+      document.changes.push({ revision: change.revision, id: change.id, values: change.values, at: change.at });
+    }
+    if (document.changes.length > MAX_CHANGE_LOG) {
+      document.changes = document.changes.slice(document.changes.length - MAX_CHANGE_LOG);
+    }
+    document.schema = 2;
     const stamp = String(document.revision).padStart(12, '0');
     await getStore().put(`mobile-library/${dataset}/changes/${stamp}-${crypto.randomUUID()}.json`, Buffer.from(JSON.stringify(change)), { forbidOverwrite: true });
     await getStore().put(definition.key, Buffer.from(JSON.stringify(document)));
@@ -130,6 +164,39 @@ async function update(dataset, rawId, rawValues, actor) {
   });
 }
 
+async function changes(dataset, requestedAfter, requestedLimit) {
+  spec(dataset);
+  const document = await read(dataset, { fresh: true });
+  if (!document) throw error(503, 'dataset not initialized');
+  const after = Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Number(requestedAfter) || 0));
+  const limit = Math.max(1, Math.min(500, Number(requestedLimit) || 100));
+  const revision = Number(document.revision || 0);
+  if (after >= revision) return { items: [], revision, nextRevision: revision, hasMore: false };
+
+  const log = Array.isArray(document.changes) ? document.changes
+    .filter(item => Number(item?.revision || 0) > after)
+    .sort((left, right) => Number(left.revision || 0) - Number(right.revision || 0)) : [];
+  if (log.length > 0) {
+    const cutoff = Number(log[Math.min(limit, log.length) - 1].revision || 0);
+    // Never split one revision: advancing a revision-only cursor halfway
+    // through a batch would permanently skip the remaining records.
+    const page = log.filter(item => Number(item.revision || 0) <= cutoff).map(item => ({
+      revision: Number(item.revision || 0),
+      id: cleanText(item.id, 24).trim(),
+      values: item.values && typeof item.values === 'object' && !Array.isArray(item.values)
+        ? clone(item.values) : {}
+    }));
+    const nextRevision = Number(page.at(-1)?.revision || after);
+    return { items: page, revision, nextRevision, hasMore: nextRevision < revision };
+  }
+
+  // Version 1 cloud snapshots predate the compact change log. Reconstruct the
+  // exact mobile edits by comparing them with the immutable initial baseline,
+  // instead of overwriting every local field with a possibly stale snapshot.
+  const reconstructed = await reconstructChanges(dataset, document);
+  return { items: reconstructed, revision, nextRevision: revision, hasMore: false, reconstructed: true };
+}
+
 async function status() {
   const [songs, stable] = await Promise.all([read('songs'), read('stable')]);
   return { ok: true, cloudIndependent: true,
@@ -137,4 +204,4 @@ async function status() {
     stable: stable ? { total: stable.items.length, revision: stable.revision, updatedAt: stable.updatedAt } : null };
 }
 
-module.exports = { bootstrap, list, read, status, update };
+module.exports = { bootstrap, changes, list, read, status, update };

@@ -167,7 +167,8 @@ class _MoreScreen extends StatelessWidget {
         ),
       ),
       const SizedBox(height: 14),
-      if (!controller.cloudIndependent && controller.update['available'] == true)
+      if (!controller.cloudIndependent &&
+          controller.update['available'] == true)
         Card(
           child: Padding(
             padding: const EdgeInsets.all(18),
@@ -227,7 +228,7 @@ class _MoreScreen extends StatelessWidget {
       await task;
       if (context.mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('操作已提交')));
+            .showSnackBar(const SnackBar(content: Text('操作已执行')));
       }
     } catch (error) {
       if (context.mounted) {

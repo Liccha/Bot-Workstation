@@ -5,6 +5,7 @@ import com.botstation.core.LogBus;
 import com.botstation.core.ProcessSupervisor;
 import com.botstation.core.TaskRunner;
 import com.botstation.ui.WorkbenchFrame;
+import com.botstation.mobile.BackgroundAgent;
 import com.formdev.flatlaf.FlatLightLaf;
 import com.mybot.SongBot;
 
@@ -16,6 +17,12 @@ public final class BotStationApp {
     private BotStationApp() {}
 
     public static void main(String[] args) {
+        if (hasArg(args, "--background-agent")) {
+            System.setProperty("file.encoding", StandardCharsets.UTF_8.name());
+            System.exit(BackgroundAgent.run(BotPaths.detect()));
+            return;
+        }
+
         if (hasArg(args, "--service=songbot")) {
             System.setProperty("file.encoding", StandardCharsets.UTF_8.name());
             try {
