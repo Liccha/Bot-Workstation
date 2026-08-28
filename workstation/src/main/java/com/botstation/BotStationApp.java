@@ -23,6 +23,19 @@ public final class BotStationApp {
             return;
         }
 
+        if (hasArg(args, "--start-service=songbot")) {
+            BotPaths paths = BotPaths.detect();
+            LogBus log = new LogBus(paths.logs());
+            try {
+                new ProcessSupervisor(paths, log).startSongBot();
+                System.exit(0);
+            } catch (Exception error) {
+                log.error("SongBot", "后台启动失败：" + String.valueOf(error.getMessage()));
+                System.exit(1);
+            }
+            return;
+        }
+
         if (hasArg(args, "--service=songbot")) {
             System.setProperty("file.encoding", StandardCharsets.UTF_8.name());
             try {

@@ -6,8 +6,13 @@ import java.io.InputStreamReader;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -56,7 +61,10 @@ public final class ProcessSupervisor {
         // which makes SongBot open an empty relative song_data.db beside the
         // workstation. Starting the already-loaded classpath through Java keeps
         // ProcessBuilder.directory(songBot) authoritative for every relative asset.
-        String classpath = absoluteClasspath(System.getProperty("java.class.path"));
+        String classpath = prepareImmutableClasspath(
+            absoluteClasspath(System.getProperty("java.class.path")),
+            paths.workstation,
+            paths.config().resolve("service-runtime"));
         ProcessBuilder builder = new ProcessBuilder(buildSongBotCommand(paths.javaExecutable(), classpath, paths.songBot));
         builder.directory(paths.songBot.toFile());
         // Keep the embedded SongBot aligned with the currently active OneBot HTTP port.
@@ -90,6 +98,95 @@ public final class ProcessSupervisor {
             if (!entry.isAbsolute()) entries[i] = base.resolve(entry).normalize().toString();
         }
         return String.join(java.io.File.pathSeparator, entries);
+    }
+
+    /**
+     * SongBot loads OpenCC, SQLite and other dependencies lazily. A packaged
+     * workstation executable must therefore never be used as a mutable live
+     * classpath: replacing that executable during an update corrupts the
+     * already-running JVM's later class loads. Files owned by the workstation
+     * are copied to content-addressed runtime snapshots before the service is
+     * launched. The jpackage application JAR may live outside the data/workstation
+     * directory, so the known packaged entry names are covered as well. Directories
+     * and unrelated external development dependencies are kept as-is.
+     */
+    static String prepareImmutableClasspath(String classpath, Path mutableRoot, Path snapshotDirectory)
+        throws IOException {
+        Path root = mutableRoot.toAbsolutePath().normalize();
+        Path snapshots = snapshotDirectory.toAbsolutePath().normalize();
+        String[] entries = classpath.split(java.util.regex.Pattern.quote(java.io.File.pathSeparator), -1);
+        for (int i = 0; i < entries.length; i++) {
+            if (entries[i].isBlank()) continue;
+            Path source = Path.of(entries[i]).toAbsolutePath().normalize();
+            boolean managedEntry = source.startsWith(root) || isPackagedWorkstationEntry(source);
+            if (!Files.isRegularFile(source) || !managedEntry || source.startsWith(snapshots)) {
+                entries[i] = source.toString();
+                continue;
+            }
+            entries[i] = snapshotClasspathEntry(source, snapshots).toString();
+        }
+        return String.join(java.io.File.pathSeparator, entries);
+    }
+
+    private static boolean isPackagedWorkstationEntry(Path source) {
+        Path fileName = source.getFileName();
+        if (fileName == null) return false;
+        String name = fileName.toString().toLowerCase(Locale.ROOT);
+        return name.equals("bot工作站.exe") || name.equals("bot工作站-core.jar");
+    }
+
+    private static Path snapshotClasspathEntry(Path source, Path snapshotDirectory) throws IOException {
+        Files.createDirectories(snapshotDirectory);
+        IOException changedWhileCopying = null;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            String digest = sha256(source);
+            Path target = snapshotDirectory.resolve("songbot-runtime-" + digest.substring(0, 24) + ".jar");
+            if (Files.isRegularFile(target)) {
+                if (digest.equals(sha256(target))) return target;
+                throw new IOException("SongBot 运行快照校验失败：" + target);
+            }
+
+            Path temporary = Files.createTempFile(snapshotDirectory, "songbot-runtime-", ".tmp");
+            try {
+                Files.copy(source, temporary, StandardCopyOption.REPLACE_EXISTING);
+                if (!digest.equals(sha256(temporary))) {
+                    changedWhileCopying = new IOException("工作站正在更新，正在重新准备 SongBot 运行快照");
+                    continue;
+                }
+                try {
+                    try {
+                        Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE);
+                    } catch (AtomicMoveNotSupportedException error) {
+                        Files.move(temporary, target);
+                    }
+                } catch (FileAlreadyExistsException error) {
+                    if (!digest.equals(sha256(target))) throw error;
+                }
+                return target;
+            } finally {
+                Files.deleteIfExists(temporary);
+            }
+        }
+        throw changedWhileCopying == null
+            ? new IOException("无法准备 SongBot 运行快照")
+            : changedWhileCopying;
+    }
+
+    private static String sha256(Path file) throws IOException {
+        final MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException error) {
+            throw new IllegalStateException("JVM 不支持 SHA-256", error);
+        }
+        byte[] buffer = new byte[64 * 1024];
+        try (java.io.InputStream input = Files.newInputStream(file)) {
+            int read;
+            while ((read = input.read(buffer)) >= 0) if (read > 0) digest.update(buffer, 0, read);
+        }
+        StringBuilder hex = new StringBuilder(64);
+        for (byte value : digest.digest()) hex.append(String.format(Locale.ROOT, "%02x", value & 0xff));
+        return hex.toString();
     }
 
     public void stopSongBot() throws Exception {
