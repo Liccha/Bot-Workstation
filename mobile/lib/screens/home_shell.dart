@@ -103,12 +103,12 @@ class _HomeShellState extends State<HomeShell>
           NavigationDestination(
             icon: Icon(Icons.library_music_outlined),
             selectedIcon: Icon(Icons.library_music_rounded),
-            label: '歌曲',
+            label: '茶韵谱面',
           ),
           NavigationDestination(
             icon: Icon(Icons.table_chart_outlined),
             selectedIcon: Icon(Icons.table_chart_rounded),
-            label: 'Stable',
+            label: 'Stable谱面',
           ),
           NavigationDestination(
             icon: Icon(Icons.more_horiz_rounded),
