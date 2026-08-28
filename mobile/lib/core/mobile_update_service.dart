@@ -67,6 +67,17 @@ class MobileUpdateService {
     MobileRelease release, {
     void Function(double progress)? onProgress,
   }) async {
+    final directory = await getTemporaryDirectory();
+    final output = File(
+      '${directory.path}/BotWorkstation-Mobile-${release.version}.apk',
+    );
+    if (await isValidCachedPackage(output, release)) {
+      onProgress?.call(1);
+      await _install(output);
+      return;
+    }
+    if (await output.exists()) await output.delete();
+
     final request = http.Request('GET', release.url)
       ..headers['Accept'] = 'application/vnd.android.package-archive';
     final response = await request.send().timeout(const Duration(seconds: 20));
@@ -77,14 +88,14 @@ class MobileUpdateService {
     if (declared != null && declared != release.size) {
       throw StateError('更新包大小与版本清单不一致');
     }
-    final directory = await getTemporaryDirectory();
-    final output = File('${directory.path}/BotWorkstation-Mobile-${release.version}.apk');
     final sink = output.openWrite();
     final digest = AccumulatorSink<Digest>();
     final hashSink = sha256.startChunkedConversion(digest);
     var received = 0;
     try {
-      await for (final chunk in response.stream.timeout(const Duration(seconds: 45))) {
+      await for (final chunk in response.stream.timeout(
+        const Duration(seconds: 45),
+      )) {
         received += chunk.length;
         if (received > release.size || received > 512 * 1024 * 1024) {
           throw StateError('更新包大小异常');
@@ -96,7 +107,8 @@ class MobileUpdateService {
       await sink.flush();
       await sink.close();
       hashSink.close();
-      if (received != release.size || digest.events.single.toString() != release.sha256) {
+      if (received != release.size ||
+          digest.events.single.toString() != release.sha256) {
         await output.delete().catchError((_) => output);
         throw StateError('更新包完整性校验失败，已拒绝安装');
       }
@@ -105,9 +117,27 @@ class MobileUpdateService {
       if (await output.exists()) await output.delete();
       rethrow;
     }
-    await const MethodChannel('moe.teacharm.bot_workstation/update')
-        .invokeMethod<void>('installApk', {'path': output.path});
+    await _install(output);
   }
+
+  static Future<bool> isValidCachedPackage(
+    File file,
+    MobileRelease release,
+  ) async {
+    if (!await file.exists() || await file.length() != release.size) {
+      return false;
+    }
+    try {
+      final digest = await sha256.bind(file.openRead()).first;
+      return digest.toString() == release.sha256;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _install(File output) =>
+      const MethodChannel('moe.teacharm.bot_workstation/update')
+          .invokeMethod<void>('installApk', {'path': output.path});
 
   static int compareVersions(String left, String right) {
     final a = left.split('.').map(int.parse).toList();

@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:bot_workstation_mobile/core/api_client.dart';
 import 'package:bot_workstation_mobile/core/app_controller.dart';
@@ -10,6 +13,7 @@ import 'package:bot_workstation_mobile/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:crypto/crypto.dart';
 
 void main() {
   group('WorkstationApi.normalizeServer', () {
@@ -83,34 +87,31 @@ void main() {
     expect(requests.length, 2);
   });
 
-  test(
-    'cloud-independent account can relay service controls to the resident agent',
-    () async {
-      final requests = <http.Request>[];
-      final api = WorkstationApi(
-        'https://editor.teacharm.moe/api/mobile-data',
-        token: 'device-id.device-secret',
-        client: MockClient((request) async {
-          requests.add(request);
-          expect(request.url.path, '/api/mobile-relay');
-          expect(
-            request.headers['authorization'],
-            'Device device-id.device-secret',
-          );
-          if (request.url.queryParameters['action'] == 'submit') {
-            expect(request.body, contains('songbot.start'));
-            return http.Response('{"id":"control-id","state":"pending"}', 202);
-          }
-          return http.Response(
-            '{"id":"control-id","state":"complete","response":{"status":200,"body":{"ok":true}}}',
-            200,
-          );
-        }),
-      );
-      await api.action('songbot.start');
-      expect(requests.length, 2);
-    },
-  );
+  test('cloud-independent account can relay service controls to the resident agent', () async {
+    final requests = <http.Request>[];
+    final api = WorkstationApi(
+      'https://editor.teacharm.moe/api/mobile-data',
+      token: 'device-id.device-secret',
+      client: MockClient((request) async {
+        requests.add(request);
+        expect(request.url.path, '/api/mobile-relay');
+        expect(
+          request.headers['authorization'],
+          'Device device-id.device-secret',
+        );
+        if (request.url.queryParameters['action'] == 'submit') {
+          expect(request.body, contains('songbot.start'));
+          return http.Response('{"id":"control-id","state":"pending"}', 202);
+        }
+        return http.Response(
+          '{"id":"control-id","state":"complete","response":{"status":200,"body":{"ok":true}}}',
+          200,
+        );
+      }),
+    );
+    await api.action('songbot.start');
+    expect(requests.length, 2);
+  });
 
   test('cloud-independent refresh reads cached presence without queueing a command', () async {
     final requests = <http.Request>[];
@@ -181,6 +182,29 @@ void main() {
         lessThan(0),
       );
     });
+
+    test('recognizes a previously verified APK for reuse', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'bot-update-test-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/cached.apk');
+      final bytes = utf8.encode('verified mobile package');
+      await file.writeAsBytes(bytes);
+      final release = MobileRelease(
+        version: '9.9.9',
+        url: Uri.parse(
+          'https://assets.teacharm.moe/bot-workstation/mobile/releases/9.9.9/test.apk',
+        ),
+        sha256: sha256.convert(bytes).toString(),
+        notes: '',
+        size: bytes.length,
+      );
+      expect(
+        await MobileUpdateService.isValidCachedPackage(file, release),
+        isTrue,
+      );
+    });
   });
 
   testWidgets('shows the mobile update prompt before pairing', (tester) async {
@@ -236,41 +260,101 @@ void main() {
     expect(stopButtons[1].onPressed, isNull);
   });
 
-  testWidgets('song editor keeps raw difficulty names and first label visible', (
+  testWidgets(
+    'song editor keeps raw difficulty names and first label visible',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(390, 844);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final api = WorkstationApi(
+        'http://192.168.1.8:8098',
+        token: 'paired-token',
+        client: MockClient(
+          (_) async => http.Response(
+            '{"items":[{"id":"2","song_name":"星间旅行","author":"HOYO-MiX","charter":"Furina","4k_ez":"4-436","4k_nm":"6-697","4k_hd":"8-958","4k_mx":"","4k_sp":""}],"total":1,"hasMore":false}',
+            200,
+            headers: const {'content-type': 'application/json; charset=utf-8'},
+          ),
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.light(),
+          home: Scaffold(
+            body: RecordsScreen(api: api, type: RecordType.song),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('星间旅行'));
+      await tester.pumpAndSettle();
+
+      final labelRect = tester.getRect(find.text('歌名'));
+      final listRect = tester.getRect(find.byType(ListView).last);
+      expect(labelRect.top, greaterThanOrEqualTo(listRect.top + 1));
+      for (final field in const ['4k_ez', '4k_nm', '4k_hd', '4k_mx', '4k_sp']) {
+        expect(find.text(field), findsOneWidget);
+      }
+      expect(find.text('4K 简单'), findsNothing);
+    },
+  );
+
+  testWidgets('song list fetches one 100-row page and appends on scroll', (
     tester,
   ) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(390, 844);
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(tester.view.resetPhysicalSize);
+    final requests = <Uri>[];
     final api = WorkstationApi(
       'http://192.168.1.8:8098',
       token: 'paired-token',
-      client: MockClient(
-        (_) async => http.Response(
-          '{"items":[{"id":"2","song_name":"星间旅行","author":"HOYO-MiX","charter":"Furina","4k_ez":"4-436","4k_nm":"6-697","4k_hd":"8-958","4k_mx":"","4k_sp":""}],"total":1,"hasMore":false}',
+      client: MockClient((request) async {
+        requests.add(request.url);
+        final offset = int.parse(request.url.queryParameters['offset']!);
+        final limit = int.parse(request.url.queryParameters['limit']!);
+        const total = 250;
+        final count = (total - offset).clamp(0, limit);
+        final items = List.generate(
+          count,
+          (index) => {
+            'id': '${offset + index + 1}',
+            'song_name': '歌曲 ${offset + index + 1}',
+            'author': '作者',
+            'charter': '谱师',
+          },
+        );
+        return http.Response(
+          '{"items":${jsonEncode(items)},"total":$total,'
+          '"offset":$offset,"nextOffset":${offset + count},'
+          '"hasMore":${offset + count < total}}',
           200,
           headers: const {'content-type': 'application/json; charset=utf-8'},
-        ),
-      ),
+        );
+      }),
     );
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.light(),
-        home: Scaffold(body: RecordsScreen(api: api, type: RecordType.song)),
+        home: Scaffold(
+          body: RecordsScreen(api: api, type: RecordType.song),
+        ),
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('星间旅行'));
-    await tester.pumpAndSettle();
 
-    final labelRect = tester.getRect(find.text('歌名'));
-    final listRect = tester.getRect(find.byType(ListView).last);
-    expect(labelRect.top, greaterThanOrEqualTo(listRect.top + 1));
-    for (final field in const ['4k_ez', '4k_nm', '4k_hd', '4k_mx', '4k_sp']) {
-      expect(find.text(field), findsOneWidget);
-    }
-    expect(find.text('4K 简单'), findsNothing);
+    expect(requests, hasLength(1));
+    expect(requests.single.queryParameters['offset'], '0');
+    expect(requests.single.queryParameters['limit'], '100');
+    expect(find.text('歌曲 1'), findsOneWidget);
+
+    await tester.drag(find.byType(ListView), const Offset(0, -12000));
+    await tester.pumpAndSettle();
+    expect(requests, hasLength(2));
+    expect(requests.last.queryParameters['offset'], '100');
+    expect(requests.last.queryParameters['limit'], '100');
   });
 }
 

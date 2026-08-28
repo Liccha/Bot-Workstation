@@ -12,6 +12,20 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
+class RecordPage {
+  const RecordPage({
+    required this.items,
+    required this.total,
+    required this.nextOffset,
+    required this.hasMore,
+  });
+
+  final List<Map<String, dynamic>> items;
+  final int total;
+  final int nextOffset;
+  final bool hasMore;
+}
+
 class WorkstationApi {
   WorkstationApi(String server, {this.token, http.Client? client})
     : server = normalizeServer(server),
@@ -137,25 +151,56 @@ class WorkstationApi {
     await _send('POST', '/api/action', body: {'action': action});
   }
 
+  Future<RecordPage> songPage(
+    String query, {
+    int offset = 0,
+    int limit = 100,
+  }) => _recordPage('/api/songs', query, offset: offset, limit: limit);
+
+  Future<RecordPage> stablePage(
+    String query, {
+    int offset = 0,
+    int limit = 100,
+  }) => _recordPage('/api/stable', query, offset: offset, limit: limit);
+
+  Future<RecordPage> _recordPage(
+    String path,
+    String query, {
+    required int offset,
+    required int limit,
+  }) async {
+    if (offset < 0 || limit < 1 || limit > 200) {
+      throw const ApiException('分页参数异常');
+    }
+    final data = await _send(
+      'GET',
+      path,
+      query: {'q': query, 'offset': '$offset', 'limit': '$limit'},
+    );
+    final items = _items(data);
+    final total = int.tryParse('${data['total'] ?? ''}') ?? items.length;
+    final nextOffset =
+        int.tryParse('${data['nextOffset'] ?? ''}') ?? offset + items.length;
+    final hasMore =
+        items.isNotEmpty && (data['hasMore'] == true || nextOffset < total);
+    return RecordPage(
+      items: items,
+      total: total,
+      nextOffset: nextOffset,
+      hasMore: hasMore,
+    );
+  }
+
   Future<List<Map<String, dynamic>>> songs(String query) async {
     const pageSize = 200;
     final result = <Map<String, dynamic>>[];
     var offset = 0;
     for (var page = 0; page < 100; page++) {
-      final data = await _send(
-        'GET',
-        '/api/songs',
-        query: {'q': query, 'offset': '$offset', 'limit': '$pageSize'},
-      );
-      final batch = _items(data);
+      final pageData = await songPage(query, offset: offset, limit: pageSize);
+      final batch = pageData.items;
       result.addAll(batch);
-      final total = int.tryParse('${data['total'] ?? ''}');
-      final nextOffset =
-          int.tryParse('${data['nextOffset'] ?? ''}') ?? offset + batch.length;
-      final hasMore =
-          data['hasMore'] == true || (total != null && nextOffset < total);
-      if (batch.isEmpty || !hasMore) return result;
-      offset = nextOffset;
+      if (batch.isEmpty || !pageData.hasMore) return result;
+      offset = pageData.nextOffset;
     }
     throw const ApiException('歌曲分页数量异常，已停止继续读取');
   }
@@ -165,20 +210,11 @@ class WorkstationApi {
     final result = <Map<String, dynamic>>[];
     var offset = 0;
     for (var page = 0; page < 100; page++) {
-      final data = await _send(
-        'GET',
-        '/api/stable',
-        query: {'q': query, 'offset': '$offset', 'limit': '$pageSize'},
-      );
-      final batch = _items(data);
+      final pageData = await stablePage(query, offset: offset, limit: pageSize);
+      final batch = pageData.items;
       result.addAll(batch);
-      final total = int.tryParse('${data['total'] ?? ''}');
-      final nextOffset =
-          int.tryParse('${data['nextOffset'] ?? ''}') ?? offset + batch.length;
-      final hasMore =
-          data['hasMore'] == true || (total != null && nextOffset < total);
-      if (batch.isEmpty || !hasMore) return result;
-      offset = nextOffset;
+      if (batch.isEmpty || !pageData.hasMore) return result;
+      offset = pageData.nextOffset;
     }
     throw const ApiException('Stable 分页数量异常，已停止继续读取');
   }

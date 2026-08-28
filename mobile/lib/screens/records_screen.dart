@@ -19,39 +19,106 @@ class RecordsScreen extends StatefulWidget {
 }
 
 class _RecordsScreenState extends State<RecordsScreen> {
+  static const pageSize = 100;
   final query = TextEditingController();
+  final scroll = ScrollController();
   Timer? debounce;
   bool loading = true;
+  bool loadingMore = false;
+  bool hasMore = false;
+  int nextOffset = 0;
+  int generation = 0;
+  String activeQuery = '';
   String? error;
   List<Map<String, dynamic>> items = const [];
 
   @override
   void initState() {
     super.initState();
+    scroll.addListener(_onScroll);
     load();
   }
 
   @override
   void dispose() {
     debounce?.cancel();
+    scroll
+      ..removeListener(_onScroll)
+      ..dispose();
     query.dispose();
     super.dispose();
   }
 
   Future<void> load() async {
+    final requestGeneration = ++generation;
+    final requestedQuery = query.text;
     setState(() {
       loading = true;
+      loadingMore = false;
+      hasMore = false;
+      nextOffset = 0;
+      items = const [];
       error = null;
     });
+    if (scroll.hasClients) scroll.jumpTo(0);
     try {
-      final result = widget.type == RecordType.song
-          ? await widget.api.songs(query.text)
-          : await widget.api.stable(query.text);
-      if (mounted) setState(() => items = result);
+      final page = await _page(requestedQuery, 0);
+      if (mounted && requestGeneration == generation) {
+        setState(() {
+          activeQuery = requestedQuery;
+          items = page.items;
+          nextOffset = page.nextOffset;
+          hasMore = page.hasMore;
+        });
+      }
     } catch (e) {
-      if (mounted) setState(() => error = e.toString());
+      if (mounted && requestGeneration == generation) {
+        setState(() => error = e.toString());
+      }
     } finally {
-      if (mounted) setState(() => loading = false);
+      if (mounted && requestGeneration == generation) {
+        setState(() => loading = false);
+      }
+    }
+  }
+
+  Future<RecordPage> _page(String value, int offset) =>
+      widget.type == RecordType.song
+      ? widget.api.songPage(value, offset: offset, limit: pageSize)
+      : widget.api.stablePage(value, offset: offset, limit: pageSize);
+
+  void _onScroll() {
+    if (!scroll.hasClients ||
+        scroll.position.extentAfter > 280 ||
+        loading ||
+        loadingMore ||
+        !hasMore) {
+      return;
+    }
+    unawaited(_loadMore());
+  }
+
+  Future<void> _loadMore() async {
+    final requestGeneration = generation;
+    final requestedOffset = nextOffset;
+    setState(() => loadingMore = true);
+    try {
+      final page = await _page(activeQuery, requestedOffset);
+      if (!mounted || requestGeneration != generation) return;
+      setState(() {
+        items = [...items, ...page.items];
+        nextOffset = page.nextOffset;
+        hasMore = page.hasMore;
+      });
+    } catch (e) {
+      if (mounted && requestGeneration == generation) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('继续加载失败：$e')));
+      }
+    } finally {
+      if (mounted && requestGeneration == generation) {
+        setState(() => loadingMore = false);
+      }
     }
   }
 
@@ -96,15 +163,29 @@ class _RecordsScreenState extends State<RecordsScreen> {
             : RefreshIndicator(
                 onRefresh: load,
                 child: ListView.separated(
+                  controller: scroll,
                   physics: const AlwaysScrollableScrollPhysics(),
                   padding: const EdgeInsets.fromLTRB(18, 4, 18, 28),
-                  itemCount: items.length,
+                  itemCount: items.length + (loadingMore ? 1 : 0),
                   separatorBuilder: (_, _) => const SizedBox(height: 9),
-                  itemBuilder: (context, index) => _RecordCard(
-                    item: items[index],
-                    type: widget.type,
-                    onTap: () => _edit(items[index]),
-                  ),
+                  itemBuilder: (context, index) {
+                    if (index == items.length) {
+                      return const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 14),
+                        child: Center(
+                          child: SizedBox.square(
+                            dimension: 24,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        ),
+                      );
+                    }
+                    return _RecordCard(
+                      item: items[index],
+                      type: widget.type,
+                      onTap: () => _edit(items[index]),
+                    );
+                  },
                 ),
               ),
       ),
