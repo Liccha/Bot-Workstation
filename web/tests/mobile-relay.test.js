@@ -41,19 +41,35 @@ test('pairing creates a revocable hidden device account without storing its secr
   assert.equal(Object.hasOwn(listed.body.items[0], 'secretHash'), false);
 });
 
-test('desktop heartbeat provides sub-second cached presence', async () => {
+test('desktop heartbeat provides sub-second presence and carries the daily automation switch', async () => {
   const registered = await call('POST', 'register-device', { headers: desktop, body: { name: '状态设备' } });
   const deviceHeaders = { authorization: `Device ${registered.body.token}` };
-  assert.equal((await call('POST', 'desktop-heartbeat', {
-    headers: desktop,
-    body: { songBot: 'running', napCat: 'stopped', dailyAutomation: false },
-  })).status, 200);
+  const heartbeat = await call('POST', 'desktop-heartbeat', {
+    headers: { ...desktop, 'x-admin-device': 'test-workstation' },
+    body: { songBot: 'running', napCat: 'stopped', dailyAutomation: false }
+  });
+  assert.equal(heartbeat.status, 200);
   const started = Date.now();
   const presence = await call('GET', 'presence', { headers: deviceHeaders });
-  assert.ok(Date.now() - started < 1000);
-  assert.equal(presence.body.workstationOnline, true);
-  assert.equal(presence.body.songBot, 'running');
-  assert.equal(presence.body.dailyAutomation, false);
+  assert.ok(Date.now() - started < 1_000, 'presence lookup exceeded one second');
+  assert.deepEqual({
+    online: presence.body.workstationOnline,
+    songBot: presence.body.songBot,
+    napCat: presence.body.napCat,
+    dailyAutomation: presence.body.dailyAutomation,
+  }, { online: true, songBot: 'running', napCat: 'stopped', dailyAutomation: false });
+
+  const submitted = await call('POST', 'submit', { headers: deviceHeaders, body: {
+    method: 'POST', path: '/api/action', body: { action: 'daily.automation.enable' }
+  } });
+  assert.equal(submitted.status, 202);
+  const polled = await call('GET', 'desktop-poll', { headers: desktop });
+  const work = polled.body.items.find(item => item.id === submitted.body.id);
+  assert.ok(work, 'daily automation command should be available to the workstation');
+  assert.equal((await call('POST', 'desktop-complete', { headers: desktop, body: {
+    id: work.id, claimToken: work.claimToken, status: 200, body: { ok: true }
+  } })).status, 200);
+  assert.equal((await call('GET', 'result', { headers: deviceHeaders, query: { id: submitted.body.id } })).status, 200);
 });
 
 test('device request crosses networks, is executed once, and returns only to its account', async () => {
@@ -102,8 +118,61 @@ test('completed requests release their slots after the device receives the resul
   assert.deepEqual(new Set(polled.body.items.map(item => item.id)), new Set(concurrent.map(result => result.body.id)));
 });
 
+test('idle desktop polls do not repeatedly download completed response bodies', async () => {
+  const registered = await call('POST', 'register-device', { headers: desktop, body: { name: '流量回归设备' } });
+  const key = `mobile-relay/inboxes/${registered.body.id}/0.json`;
+  await getStore().put(key, Buffer.from(JSON.stringify({
+    id: crypto.randomUUID(),
+    deviceId: registered.body.id,
+    state: 'complete',
+    completedAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    response: { status: 200, body: { padding: 'x'.repeat(512 * 1024) } }
+  })));
+
+  const store = getStore();
+  const originalGet = store.get.bind(store);
+  let completedResponseBytes = 0;
+  store.get = async candidate => {
+    const result = await originalGet(candidate);
+    if (candidate === key && result) completedResponseBytes += result.body.length;
+    return result;
+  };
+  try {
+    for (let index = 0; index < 5; index++) {
+      const polled = await call('GET', 'desktop-poll', { headers: desktop });
+      assert.equal(polled.status, 200);
+      assert.deepEqual(polled.body.items, []);
+    }
+  } finally {
+    store.get = originalGet;
+    await store.delete(key);
+  }
+  assert.ok(completedResponseBytes < 64 * 1024,
+    `idle polling re-downloaded ${completedResponseBytes} bytes of an already completed response`);
+});
+
+test('first compact-index initialization never scans legacy device slots', async () => {
+  const store = getStore();
+  await store.delete('mobile-relay/pending.json');
+  const originalGet = store.get.bind(store);
+  let inboxReads = 0;
+  store.get = async key => {
+    if (String(key).startsWith('mobile-relay/inboxes/')) inboxReads++;
+    return originalGet(key);
+  };
+  try {
+    const polled = await call('GET', 'desktop-poll', { headers: desktop });
+    assert.equal(polled.status, 200);
+    assert.deepEqual(polled.body.items, []);
+  } finally {
+    store.get = originalGet;
+  }
+  assert.equal(inboxReads, 0, `compact-index initialization scanned ${inboxReads} legacy slots`);
+});
+
 test('empty desktop poll does not take or wait for the queue lock', async () => {
-  const lockKey = 'locks/mobile-relay-queue.json';
+  const lockKey = 'locks/mobile-relay-pending.json';
   await getStore().put(lockKey, Buffer.from(JSON.stringify({
     token: crypto.randomUUID(), expiresAt: new Date(Date.now() + 30_000).toISOString()
   })));

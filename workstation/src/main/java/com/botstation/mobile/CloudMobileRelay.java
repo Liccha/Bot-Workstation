@@ -42,7 +42,8 @@ final class CloudMobileRelay implements AutoCloseable {
     }
 
     private static final int MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
-    private static final long HEARTBEAT_INTERVAL_MS = 30_000L;
+    private static final long HEARTBEAT_INTERVAL_MS = 90_000L;
+    private static final long EMPTY_POLL_INTERVAL_MS = 10_000L;
     private final URI endpoint;
     private final String desktopToken;
     private final String workstationName;
@@ -110,7 +111,7 @@ final class CloudMobileRelay implements AutoCloseable {
                 JSONArray items = request("GET", "desktop-poll", null, true).optJSONArray("items");
                 if (!lastError.isEmpty()) { lastError = ""; log.info("手机端", "跨网络设备中继已恢复"); }
                 if (items != null) for (int index = 0; index < items.length() && running.get(); index++) execute(items.getJSONObject(index));
-                pause(items == null || items.isEmpty() ? 1800 : 150);
+                pause(items == null || items.isEmpty() ? EMPTY_POLL_INTERVAL_MS : 150);
             } catch (Exception error) {
                 String message = String.valueOf(error.getMessage());
                 if (!message.equals(lastError)) { lastError = message; log.warn("手机端", "跨网络中继暂不可用：" + message); }

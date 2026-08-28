@@ -12,6 +12,29 @@ const caches = new Map();
 function now() { return new Date().toISOString(); }
 function error(statusCode, message) { const value = new Error(message); value.statusCode = statusCode; return value; }
 function spec(name) { const value = DATASETS[name]; if (!value) throw error(400, 'invalid dataset'); return value; }
+function revisionKey(dataset) { spec(dataset); return `mobile-library/${dataset}/revision.json`; }
+function revisionMarker(dataset, document) {
+  return {
+    schema: 1,
+    dataset,
+    revision: Math.max(0, Number(document?.revision || 0)),
+    updatedAt: String(document?.updatedAt || now())
+  };
+}
+async function writeRevisionMarker(dataset, document) {
+  const marker = revisionMarker(dataset, document);
+  await getStore().put(revisionKey(dataset), Buffer.from(JSON.stringify(marker)));
+  return marker;
+}
+async function readRevisionMarker(dataset) {
+  const object = await getStore().get(revisionKey(dataset));
+  if (!object) return null;
+  const marker = JSON.parse(object.body.toString('utf8'));
+  if (marker?.dataset !== dataset || !Number.isSafeInteger(Number(marker.revision)) || Number(marker.revision) < 0) {
+    return null;
+  }
+  return revisionMarker(dataset, marker);
+}
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function cleanText(value, limit = 8192) {
   const text = String(value == null ? '' : value).normalize('NFC').replace(/\u0000/g, '');
@@ -71,6 +94,7 @@ async function bootstrap(dataset, raw, actor) {
     const bytes = Buffer.from(JSON.stringify(document));
     await getStore().put(`mobile-library/${dataset}/baseline-1.json`, bytes, { forbidOverwrite: true });
     await getStore().put(definition.key, bytes, { forbidOverwrite: true });
+    await writeRevisionMarker(dataset, document);
     caches.set(dataset, { at: Date.now(), document });
     await repo.writeAudit({ event: 'MOBILE_LIBRARY_BOOTSTRAPPED', actor, dataset, rows: items.length });
     return { revision: document.revision, total: items.length };
@@ -139,7 +163,12 @@ async function update(dataset, rawId, rawValues, actor) {
       item[actual] = next;
       values[actual] = next;
     }
-    if (Object.keys(values).length === 0) return { ok: true, revision: Number(document.revision || 0), unchanged: true };
+    if (Object.keys(values).length === 0) {
+      // Repair a missing or stale derived marker after a partially completed
+      // write without rewriting the full library snapshot.
+      await writeRevisionMarker(dataset, document);
+      return { ok: true, revision: Number(document.revision || 0), unchanged: true };
+    }
     document.revision = Number(document.revision || 0) + 1;
     document.updatedAt = now();
     const change = { schema: 1, dataset, revision: document.revision, id, values, before,
@@ -158,6 +187,7 @@ async function update(dataset, rawId, rawValues, actor) {
     const stamp = String(document.revision).padStart(12, '0');
     await getStore().put(`mobile-library/${dataset}/changes/${stamp}-${crypto.randomUUID()}.json`, Buffer.from(JSON.stringify(change)), { forbidOverwrite: true });
     await getStore().put(definition.key, Buffer.from(JSON.stringify(document)));
+    await writeRevisionMarker(dataset, document);
     caches.set(dataset, { at: Date.now(), document });
     await repo.writeAudit({ event: dataset === 'songs' ? 'MOBILE_SONG_UPDATED' : 'MOBILE_STABLE_UPDATED', actor, id, values, revision: document.revision });
     return { ok: true, revision: document.revision, updatedAt: document.updatedAt };
@@ -166,10 +196,15 @@ async function update(dataset, rawId, rawValues, actor) {
 
 async function changes(dataset, requestedAfter, requestedLimit) {
   spec(dataset);
-  const document = await read(dataset, { fresh: true });
-  if (!document) throw error(503, 'dataset not initialized');
   const after = Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Number(requestedAfter) || 0));
   const limit = Math.max(1, Math.min(500, Number(requestedLimit) || 100));
+  const marker = await readRevisionMarker(dataset);
+  if (marker && after >= marker.revision) {
+    return { items: [], revision: marker.revision, nextRevision: marker.revision, hasMore: false };
+  }
+  const document = await read(dataset, { fresh: true });
+  if (!document) throw error(503, 'dataset not initialized');
+  if (!marker) await writeRevisionMarker(dataset, document);
   const revision = Number(document.revision || 0);
   if (after >= revision) return { items: [], revision, nextRevision: revision, hasMore: false };
 

@@ -28,7 +28,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /** Pulls cloud edits into the local DB/CSV used by the desktop editor and SongBot. */
 final class CloudLibrarySync implements AutoCloseable {
     private static final int MAX_RESPONSE_BYTES = 12 * 1024 * 1024;
-    private static final long POLL_INTERVAL_MS = 3_000L;
+    private static final long POLL_INTERVAL_MS = 30_000L;
     private final URI endpoint;
     private final String desktopToken;
     private final MobileDataService data;

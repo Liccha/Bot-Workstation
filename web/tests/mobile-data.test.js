@@ -17,6 +17,7 @@ process.env.ANNOUNCEMENT_HIDDEN_GROUP_ID = 'mobile-data-group';
 
 const relay = require('../api/mobile-relay');
 const data = require('../api/mobile-data');
+const { getStore } = require('../api/_lib/storage');
 const desktop = { authorization: 'Desktop mobile-data-desktop-token' };
 
 function call(handler, method, action, { body, headers = {}, query = {} } = {}) {
@@ -81,4 +82,36 @@ test('revocation and emergency write lock apply to direct cloud data', async () 
   } finally { delete process.env.ANNOUNCEMENT_EMERGENCY_WRITE_LOCK; }
   await call(relay, 'POST', 'revoke-device', { headers: desktop, body: { id: registered.body.id } });
   assert.equal((await call(data, 'GET', 'songs', { headers })).status, 401);
+});
+
+test('an unchanged desktop change cursor never downloads the full library snapshot', async () => {
+  const store = getStore();
+  const currentKey = 'mobile-library/songs/current.json';
+  const current = await store.get(currentKey);
+  const revision = JSON.parse(current.body.toString('utf8')).revision;
+  const originalGet = store.get.bind(store);
+  let snapshotReads = 0;
+  let snapshotBytes = 0;
+  store.get = async key => {
+    const result = await originalGet(key);
+    if (key === currentKey && result) {
+      snapshotReads++;
+      snapshotBytes += result.body.length;
+    }
+    return result;
+  };
+  try {
+    for (let index = 0; index < 5; index++) {
+      const response = await call(data, 'GET', 'changes', {
+        headers: desktop,
+        query: { dataset: 'songs', after: String(revision), limit: '100' }
+      });
+      assert.equal(response.status, 200);
+      assert.deepEqual(response.body.items, []);
+    }
+  } finally {
+    store.get = originalGet;
+  }
+  assert.equal(snapshotReads, 0,
+    `idle synchronization downloaded the full snapshot ${snapshotReads} times (${snapshotBytes} bytes)`);
 });

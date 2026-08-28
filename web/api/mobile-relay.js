@@ -8,6 +8,7 @@ const mobileAuth = require('./_lib/mobile-auth');
 const DEVICES_KEY = mobileAuth.DEVICES_KEY;
 const INBOX_PREFIX = 'mobile-relay/inboxes/';
 const CLAIM_PREFIX = 'mobile-relay/claims/';
+const PENDING_KEY = 'mobile-relay/pending.json';
 const PRESENCE_KEY = 'mobile-relay/desktop-presence.json';
 const REQUEST_TTL_MS = 30 * 60 * 1000;
 const RESPONSE_TTL_MS = 60 * 60 * 1000;
@@ -57,6 +58,41 @@ async function readDevices() {
   return mobileAuth.readDevices();
 }
 
+function cleanPending(document) {
+  const items = Array.isArray(document?.items) ? document.items : [];
+  return {
+    schema: 1,
+    initialized: document?.initialized === true,
+    items: items.filter(item => safeId(item?.id) && safeId(item?.deviceId)
+      && String(item?.inboxKey || '').startsWith(INBOX_PREFIX)).slice(0, MAX_DEVICES * DEVICE_SLOTS)
+  };
+}
+async function readPending() {
+  return cleanPending(await readJson(PENDING_KEY, null));
+}
+async function mutatePending(mutator) {
+  return repo.withLock('mobile-relay-pending', async () => {
+    const pending = await readPending();
+    await mutator(pending);
+    await getStore().put(PENDING_KEY, Buffer.from(JSON.stringify(pending)));
+    return pending;
+  });
+}
+async function enqueuePending(item, inboxKey) {
+  await mutatePending(pending => {
+    pending.items = pending.items.filter(entry => entry.id !== item.id && entry.inboxKey !== inboxKey);
+    pending.items.push({ id: item.id, deviceId: item.deviceId, inboxKey, nextAttemptAt: null });
+  });
+}
+async function updatePending(finishedIds, deferred) {
+  if (finishedIds.length === 0 && deferred.size === 0) return;
+  const finished = new Set(finishedIds);
+  await mutatePending(pending => {
+    pending.items = pending.items.filter(item => !finished.has(item.id)).map(item => deferred.has(item.id)
+      ? { ...item, nextAttemptAt: deferred.get(item.id) } : item);
+  });
+}
+
 function slotKey(deviceId, index) { return `${INBOX_PREFIX}${deviceId}/${index}.json`; }
 function claimKey(id) { return `${CLAIM_PREFIX}${id}.json`; }
 function objectExists(error) {
@@ -104,16 +140,26 @@ async function placeInSlot(item) {
     const key = slotKey(item.deviceId, index);
     try {
       await getStore().put(key, bytes, { forbidOverwrite: true });
-      return true;
+      return key;
     } catch (error) {
       if (!objectExists(error)) throw error;
     }
   }
   return repo.withLock(`mobile-relay-submit-${item.deviceId}`, async () => {
     const available = (await readSlots(item.deviceId)).find(slot => reusable(slot.item));
-    if (!available) return false;
+    if (!available) return null;
     await getStore().put(available.key, bytes);
-    return true;
+    return available.key;
+  });
+}
+
+async function initializePending() {
+  return repo.withLock('mobile-relay-pending', async () => {
+    const pending = await readPending();
+    if (pending.initialized) return pending;
+    pending.initialized = true;
+    await getStore().put(PENDING_KEY, Buffer.from(JSON.stringify(pending)));
+    return pending;
   });
 }
 
@@ -189,6 +235,7 @@ module.exports = async function handler(req, res) {
         updatedAt: presence?.updatedAt || null,
       });
     }
+
     if (action === 'register-device' && req.method === 'POST') {
       if (!desktop) throw unauthorized();
       await emergency.assertWriteAllowed();
@@ -259,7 +306,10 @@ module.exports = async function handler(req, res) {
       }
       const item = { id: crypto.randomUUID(), deviceId: device.id, createdAt: now(),
         expiresAt: new Date(Date.now() + REQUEST_TTL_MS).toISOString(), state: 'pending', payload };
-      if (!(await placeInSlot(item))) throw rateLimited();
+      const inboxKey = await placeInSlot(item);
+      if (!inboxKey) throw rateLimited();
+      try { await enqueuePending(item, inboxKey); }
+      catch (error) { await getStore().delete(inboxKey).catch(() => {}); throw error; }
       return json(res, 202, { id: item.id, state: item.state });
     }
 
@@ -270,8 +320,11 @@ module.exports = async function handler(req, res) {
       const record = slot?.item;
       if (!record || expired(record)) throw notFound();
       if (record.state === 'complete' && !record.deliveredAt) {
-        record.deliveredAt = now();
-        await getStore().put(slot.key, Buffer.from(JSON.stringify(record)));
+        await Promise.all([
+          getStore().delete(slot.key).catch(() => {}),
+          getStore().delete(claimKey(id)).catch(() => {}),
+          updatePending([id], new Map()).catch(() => {})
+        ]);
       }
       return json(res, record.state === 'complete' ? 200 : 202,
         record.state === 'complete' ? { id, state: 'complete', response: record.response } : { id, state: 'pending' });
@@ -279,26 +332,40 @@ module.exports = async function handler(req, res) {
 
     if (action === 'desktop-poll' && req.method === 'GET') {
       if (!desktop) throw unauthorized();
+      let pending = await readPending();
+      if (!pending.initialized) pending = await initializePending();
+      const ready = pending.items.filter(item => !item.nextAttemptAt || Date.parse(item.nextAttemptAt) <= Date.now());
+      if (ready.length === 0) return json(res, 200, { items: [] });
       await emergency.assertWriteAllowed();
       const claimed = [];
-      const devices = (await readDevices()).devices.filter(device => device.status !== 'revoked');
-      const slots = (await Promise.all(devices.map(device => readSlots(device.id)))).flat();
-      for (const { key, item } of slots) {
+      const finished = [];
+      const deferred = new Map();
+      for (const entry of ready) {
         if (claimed.length >= 5) break;
-        if (!item || !safeId(item.id)) continue;
+        const { key, item } = await readSlot(entry.inboxKey);
+        if (!item || !safeId(item.id) || item.id !== entry.id) {
+          finished.push(entry.id);
+          continue;
+        }
         if (expired(item)) {
+          finished.push(entry.id);
           await Promise.all([getStore().delete(key).catch(() => {}), getStore().delete(claimKey(item.id)).catch(() => {})]);
           continue;
         }
-        if (item.state === 'complete') continue;
+        if (item.state === 'complete') { finished.push(entry.id); continue; }
         const claim = await acquireClaim(item.id, key);
-        if (!claim) continue;
+        if (!claim) {
+          deferred.set(entry.id, item.claimExpiresAt || new Date(Date.now() + CLAIM_MS).toISOString());
+          continue;
+        }
         const copy = { ...JSON.parse(JSON.stringify(item)), state: 'claimed', claimToken: claim.token, claimExpiresAt: claim.expiresAt };
         if (copy.payload?.path === '/api/song-asset' && copy.payload.body?.key) {
           copy.payload.body.downloadUrl = await getStore().signedGetUrl(copy.payload.body.key);
         }
         claimed.push(copy);
+        deferred.set(entry.id, claim.expiresAt);
       }
+      await updatePending(finished, deferred);
       return json(res, 200, { items: claimed });
     }
 
@@ -320,6 +387,7 @@ module.exports = async function handler(req, res) {
       };
       await getStore().put(claim.inboxKey, Buffer.from(JSON.stringify(completed)));
       await getStore().delete(claimKey(id)).catch(() => {});
+      await updatePending([id], new Map());
       if (completedAssetKey.startsWith('mobile-assets/')) await getStore().delete(completedAssetKey).catch(() => {});
       return json(res, 200, { ok: true });
     }
