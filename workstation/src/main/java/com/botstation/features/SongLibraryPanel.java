@@ -154,7 +154,7 @@ public final class SongLibraryPanel extends JPanel {
             GridBagConstraints labelConstraints = new GridBagConstraints();
             labelConstraints.gridx = 0; labelConstraints.gridy = row; labelConstraints.anchor = GridBagConstraints.WEST;
             labelConstraints.insets = new Insets(5, 0, 5, 12);
-            JLabel label = new JLabel(column); label.setFont(DesignTokens.CAPTION); label.setForeground(DesignTokens.MUTED);
+            JLabel label = new JLabel(editorFieldLabel(column)); label.setFont(DesignTokens.CAPTION); label.setForeground(DesignTokens.MUTED);
             form.add(label, labelConstraints);
             JTextField field = UiKit.field(42); field.setText(selected.getOrDefault(column, "")); field.setEditable(!column.equals(idColumn));
             GridBagConstraints fieldConstraints = new GridBagConstraints();
@@ -223,6 +223,10 @@ public final class SongLibraryPanel extends JPanel {
         bar.add(resources, BorderLayout.WEST);
         bar.add(decisions, BorderLayout.EAST);
         return bar;
+    }
+
+    static String editorFieldLabel(String column) {
+        return column;
     }
 
     private static void equalizeButtonWidths(JButton... buttons) {

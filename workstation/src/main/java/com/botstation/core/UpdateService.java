@@ -17,7 +17,7 @@ import java.util.Locale;
 
 /** Public, signed-by-hash update feed. Cloud credentials are never needed by clients. */
 public final class UpdateService {
-    public static final String CURRENT_VERSION = "1.1.11";
+    public static final String CURRENT_VERSION = "1.1.12";
     public static final String MANIFEST_URL =
         "https://assets.teacharm.moe/bot-workstation/releases/latest.json";
     private static final long MAX_MANIFEST_BYTES = 64 * 1024;

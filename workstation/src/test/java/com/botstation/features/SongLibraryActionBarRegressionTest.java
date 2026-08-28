@@ -35,6 +35,9 @@ public final class SongLibraryActionBarRegressionTest {
                     "resource and decision groups no longer have a clear visual break");
                 require(absoluteX(bar, save) + save.getWidth() <= bar.getWidth() - 16,
                     "primary action is not aligned to the right inset");
+                for (String field : new String[]{"4k_ez", "4k_nm", "4k_hd", "4k_mx", "4k_sp"})
+                    require(field.equals(SongLibraryPanel.editorFieldLabel(field)),
+                        "difficulty field name was translated: " + field);
                 System.out.println("SONG_EDITOR_ACTION_BAR_GREEN");
             } catch (Throwable error) {
                 failure.set(error);

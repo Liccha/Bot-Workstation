@@ -5,6 +5,8 @@ import 'package:bot_workstation_mobile/core/mobile_update_service.dart';
 import 'package:bot_workstation_mobile/core/session_store.dart';
 import 'package:bot_workstation_mobile/main.dart';
 import 'package:bot_workstation_mobile/screens/dashboard_screen.dart';
+import 'package:bot_workstation_mobile/screens/records_screen.dart';
+import 'package:bot_workstation_mobile/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -232,6 +234,43 @@ void main() {
     expect(startButtons[1].onPressed, isNotNull);
     expect(stopButtons[0].onPressed, isNotNull);
     expect(stopButtons[1].onPressed, isNull);
+  });
+
+  testWidgets('song editor keeps raw difficulty names and first label visible', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final api = WorkstationApi(
+      'http://192.168.1.8:8098',
+      token: 'paired-token',
+      client: MockClient(
+        (_) async => http.Response(
+          '{"items":[{"id":"2","song_name":"星间旅行","author":"HOYO-MiX","charter":"Furina","4k_ez":"4-436","4k_nm":"6-697","4k_hd":"8-958","4k_mx":"","4k_sp":""}],"total":1,"hasMore":false}',
+          200,
+          headers: const {'content-type': 'application/json; charset=utf-8'},
+        ),
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: Scaffold(body: RecordsScreen(api: api, type: RecordType.song)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('星间旅行'));
+    await tester.pumpAndSettle();
+
+    final labelRect = tester.getRect(find.text('歌名'));
+    final listRect = tester.getRect(find.byType(ListView).last);
+    expect(labelRect.top, greaterThanOrEqualTo(listRect.top + 1));
+    for (final field in const ['4k_ez', '4k_nm', '4k_hd', '4k_mx', '4k_sp']) {
+      expect(find.text(field), findsOneWidget);
+    }
+    expect(find.text('4K 简单'), findsNothing);
   });
 }
 

@@ -397,6 +397,7 @@ class _RecordEditorState extends State<_RecordEditor> {
         const SizedBox(height: 8),
         Expanded(
           child: ListView.separated(
+            padding: const EdgeInsets.only(top: 10, bottom: 4),
             itemCount: fields.length,
             separatorBuilder: (_, _) => const SizedBox(height: 11),
             itemBuilder: (context, index) {
@@ -476,12 +477,10 @@ class _RecordEditorState extends State<_RecordEditor> {
       'audio_path': '歌曲音频路径',
     };
     final normalized = key.toLowerCase();
-    final difficulty = RegExp(r'^(4|5|6|7|8)k_(ez|nm|hd|mx|sp)$').firstMatch(normalized);
+    final difficulty = RegExp(r'^(4|5|6|7|8)k_(ez|nm|hd|mx|sp)$')
+        .firstMatch(normalized);
     if (difficulty != null) {
-      const levels = {
-        'ez': '简单', 'nm': '普通', 'hd': '困难', 'mx': '极限', 'sp': '特殊',
-      };
-      return '${difficulty.group(1)}K ${levels[difficulty.group(2)]}';
+      return key;
     }
     return labels[normalized] ?? key;
   }
