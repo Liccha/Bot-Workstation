@@ -75,7 +75,8 @@ public final class ProcessSupervisorRegressionTest {
             method.setAccessible(true);
             Path java = Path.of("C:\\Runtime\\bin\\javaw.exe");
             String classpath = "C:\\Bot Workstation\\BotWorkstation.jar";
-            Path songBotHome = Path.of("C:\\SongBot Data");
+            Path songBotHome = Path.of(System.getProperty("java.io.tmpdir"), "SongBot Data")
+                .toAbsolutePath().normalize();
             List<String> command = (List<String>) method.invoke(null, java, classpath, songBotHome);
             require(command.get(0).equals(java.toString()), "SongBot starts through the current Java runtime");
             require(command.contains("-cp") && command.contains(classpath), "current classpath is reused");
