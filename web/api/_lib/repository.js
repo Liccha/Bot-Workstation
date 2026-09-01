@@ -28,7 +28,12 @@ async function withLock(name, operation) {
       if (!acquired) await sleep(200 + Math.floor(Math.random() * 150));
     }
   }
-  if (!acquired) { const error = new Error('announcement store is busy'); error.statusCode = 503; throw error; }
+  if (!acquired) {
+    const error = new Error('cloud write is busy');
+    error.statusCode = 503;
+    error.publicCode = 'write_busy';
+    throw error;
+  }
   try {
     return await operation();
   } finally {
@@ -75,6 +80,37 @@ function parseAttachmentNames(raw) {
 function normalizeAttachmentNames(raw, tokens) {
   const supplied = parseAttachmentNames(raw);
   return tokens.map((token, index) => sanitizeAttachmentName(supplied[index], attachmentNameFromToken(token)));
+}
+function announcementIdentity(item) {
+  return JSON.stringify([
+    String(item.groupId || ''),
+    String(item.time || ''),
+    String(item.title || ''),
+    String(item.content || '')
+  ]);
+}
+function mergeDuplicateCreate(existing, candidate) {
+  const tokens = [];
+  const names = new Map();
+  const collect = (item) => {
+    const itemTokens = String(item.attach || '').split('|').filter(Boolean);
+    const itemNames = normalizeAttachmentNames(item.attachmentNames, itemTokens);
+    itemTokens.forEach((token, index) => {
+      if (!tokens.includes(token)) tokens.push(token);
+      if (!names.has(token)) names.set(token, itemNames[index]);
+    });
+  };
+  collect(existing);
+  collect(candidate);
+  return {
+    ...candidate,
+    id: existing.id,
+    image: candidate.image || existing.image || '',
+    attach: tokens.join('|'),
+    attachmentNames: tokens.map(token => names.get(token) || attachmentNameFromToken(token)),
+    sent: existing.sent,
+    status: existing.status
+  };
 }
 function normalizeItem(raw, existing, hiddenGroupId) {
   const old = existing || {};
@@ -163,11 +199,33 @@ async function list(hiddenGroupId) {
 }
 async function create(raw, actor, hiddenGroupId) {
   return withLock('announcements-current', async () => {
-    const state = await readDocument(); const item = normalizeItem(raw, null, hiddenGroupId);
-    await validateFiles(item);
-    state.document.items.push(item);
-    const saved = await writeDocument(state.document, { event: 'ANNOUNCEMENT_CREATED', actor, after: item });
-    return { item: visible(item, hiddenGroupId), etag: saved.etag };
+    const state = await readDocument(); const candidate = normalizeItem(raw, null, hiddenGroupId);
+    const duplicateIndex = state.document.items.findIndex(item => !item.deletedAt
+      && announcementIdentity(item) === announcementIdentity(candidate));
+    if (duplicateIndex >= 0) {
+      const existing = state.document.items[duplicateIndex];
+      if (existing.sent === 'true' || (existing.status || 'scheduled') !== 'scheduled') {
+        return { item: visible(existing, hiddenGroupId), etag: state.etag, created: false };
+      }
+      const mergedRaw = mergeDuplicateCreate(existing, candidate);
+      const merged = normalizeItem(mergedRaw, existing, hiddenGroupId);
+      await validateFiles(merged);
+      const unchanged = merged.image === existing.image
+        && merged.attach === existing.attach
+        && JSON.stringify(merged.attachmentNames) === JSON.stringify(existing.attachmentNames)
+        && merged.pin === existing.pin
+        && merged.confirm === existing.confirm;
+      if (unchanged) return { item: visible(existing, hiddenGroupId), etag: state.etag, created: false };
+      state.document.items[duplicateIndex] = merged;
+      const saved = await writeDocument(state.document, {
+        event: 'ANNOUNCEMENT_CREATE_DEDUPLICATED', actor, before: existing, after: merged
+      });
+      return { item: visible(merged, hiddenGroupId), etag: saved.etag, created: false };
+    }
+    await validateFiles(candidate);
+    state.document.items.push(candidate);
+    const saved = await writeDocument(state.document, { event: 'ANNOUNCEMENT_CREATED', actor, after: candidate });
+    return { item: visible(candidate, hiddenGroupId), etag: saved.etag, created: true };
   });
 }
 async function update(id, raw, expectedRevision, actor, hiddenGroupId) {

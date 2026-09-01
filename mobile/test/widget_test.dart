@@ -46,12 +46,18 @@ void main() {
       }
     });
 
-    test('accepts only the two fixed HTTPS relay endpoints', () {
+    test('migrates legacy relay endpoints to the domestic gateway', () {
       expect(
         WorkstationApi.normalizeServer(
           'https://editor.teacharm.moe/api/mobile-relay',
         ),
-        'https://editor.teacharm.moe/api/mobile-relay',
+        'https://$domesticCloudHost/api/mobile-relay',
+      );
+      expect(
+        WorkstationApi.normalizeServer(
+          'https://$domesticCloudHost/api/mobile-data',
+        ),
+        'https://$domesticCloudHost/api/mobile-data',
       );
       expect(
         () => WorkstationApi.normalizeServer(
@@ -297,6 +303,57 @@ void main() {
         expect(find.text(field), findsOneWidget);
       }
       expect(find.text('4K 简单'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'song editor deletes through the cloud route after confirmation',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(390, 844);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final requests = <http.Request>[];
+      final api = WorkstationApi(
+        'https://editor.teacharm.moe/api/mobile-data',
+        token: 'device-id.device-secret',
+        client: MockClient((request) async {
+          requests.add(request);
+          if (request.method == 'POST') {
+            expect(request.url.queryParameters['action'], 'song-delete');
+            expect(jsonDecode(request.body)['id'], '1273');
+            return http.Response('{"ok":true}', 200);
+          }
+          return http.Response(
+            '{"items":[{"id":"1273","song_name":"RE;DIEIN","author":"HAYAKO"}],'
+            '"total":1,"hasMore":false}',
+            200,
+            headers: const {'content-type': 'application/json; charset=utf-8'},
+          );
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.light(),
+          home: Scaffold(
+            body: RecordsScreen(api: api, type: RecordType.song),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('RE;DIEIN'));
+      await tester.pumpAndSettle();
+      expect(find.text('删除歌曲并释放 ID'), findsOneWidget);
+      await tester.tap(find.text('删除歌曲并释放 ID'));
+      await tester.pumpAndSettle();
+      expect(find.text('确认删除？'), findsOneWidget);
+      expect(find.textContaining('图片和音频不会被删除'), findsNothing);
+      await tester.tap(find.text('确认删除'));
+      await tester.pumpAndSettle();
+      expect(
+        requests.where((request) => request.method == 'POST'),
+        hasLength(1),
+      );
     },
   );
 

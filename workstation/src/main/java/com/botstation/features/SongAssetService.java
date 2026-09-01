@@ -32,7 +32,12 @@ public final class SongAssetService {
     private final SongLibraryRepository repository;
 
     public SongAssetService(BotPaths paths, LogBus log) {
-        this.paths = paths; this.log = log; this.repository = new SongLibraryRepository(paths.songDatabase);
+        this(paths, log, new SongLibraryRepository(paths.songDatabase,
+            new CloudLibraryClient(paths.userState().resolve("library"))));
+    }
+
+    SongAssetService(BotPaths paths, LogBus log, SongLibraryRepository repository) {
+        this.paths = paths; this.log = log; this.repository = repository;
     }
 
     public synchronized Path publish(String id, String type, Path source) throws Exception {
@@ -52,11 +57,16 @@ public final class SongAssetService {
         Map<String, String> row = snapshot.rows.stream().filter(value -> safeId.equals(value.getOrDefault(idColumn, "").trim())).findFirst()
             .orElseThrow(() -> new IOException("歌曲 ID 不存在"));
         String pathColumn = findColumn(snapshot.columns, image ? "image_path" : "audio_path");
+        if (repository.cloudMode()) {
+            repository.cloudClient().publishAsset(safeId, type, source, contentType(extension, image));
+            log.info("歌曲资源", "已更新云端 ID " + safeId + (image ? " 的图片" : " 的音频"));
+            return source;
+        }
         Path targetDirectory = paths.desktop.resolve(image ? "合集" : "preview"); Files.createDirectories(targetDirectory);
         Path target = targetDirectory.resolve(safeId + extension);
         Path stagingRoot = paths.config().resolve("asset-staging"); Files.createDirectories(stagingRoot);
         Path backup = Files.createTempDirectory(stagingRoot, safeId + "-");
-        List<Path> previous = variants(targetDirectory, safeId);
+        List<Path> previous = variants(targetDirectory, safeId, allowed);
         for (Path old : previous) Files.copy(old, backup.resolve(old.getFileName()), StandardCopyOption.REPLACE_EXISTING);
         String previousPath = row.getOrDefault(pathColumn, "");
         try {
@@ -71,7 +81,7 @@ public final class SongAssetService {
             log.info("歌曲资源", "已更新并发布 ID " + safeId + (image ? " 的图片" : " 的音频"));
             return target;
         } catch (Exception error) {
-            for (Path current : variants(targetDirectory, safeId)) Files.deleteIfExists(current);
+            for (Path current : variants(targetDirectory, safeId, allowed)) Files.deleteIfExists(current);
             try (java.util.stream.Stream<Path> files = Files.list(backup)) {
                 for (Path old : (Iterable<Path>) files::iterator) Files.copy(old, targetDirectory.resolve(old.getFileName()), StandardCopyOption.REPLACE_EXISTING);
             }
@@ -79,6 +89,40 @@ public final class SongAssetService {
             catch (Exception restore) { error.addSuppressed(restore); }
             throw error;
         } finally { deleteTree(backup); }
+    }
+
+    /** Deletes the library row and every local/remote cover and preview owned by the same ID. */
+    public synchronized void deleteSong(String id) throws Exception {
+        String safeId = validateId(id);
+        SongLibraryRepository.Snapshot snapshot = repository.load();
+        String idColumn = findColumn(snapshot.columns, "id");
+        if (repository.cloudMode()) {
+            repository.delete(idColumn, safeId);
+            log.info("歌曲资源", "已彻底删除云端 ID " + safeId);
+            return;
+        }
+
+        Path stagingRoot = paths.config().resolve("asset-delete-staging");
+        Files.createDirectories(stagingRoot);
+        Path backup = Files.createTempDirectory(stagingRoot, safeId + "-");
+        List<StagedAsset> staged = new ArrayList<>();
+        boolean recordDeleted = false;
+        try {
+            stageVariants(paths.desktop.resolve("合集"), safeId, IMAGE_EXTENSIONS, backup.resolve("image"), staged);
+            stageVariants(paths.desktop.resolve("preview"), safeId, AUDIO_EXTENSIONS, backup.resolve("audio"), staged);
+            repository.delete(idColumn, safeId);
+            recordDeleted = true;
+            try { runPublisher(); }
+            catch (Exception publishError) {
+                log.warn("歌曲资源", "ID " + safeId + " 已删除，发布索引将在下次同步时重试：" + publishError.getMessage());
+            }
+            log.info("歌曲资源", "已彻底删除 ID " + safeId + " 的记录、图片和音频");
+        } catch (Exception error) {
+            if (!recordDeleted) restoreStaged(staged, error);
+            throw error;
+        } finally {
+            deleteTree(backup);
+        }
     }
 
     public Path downloadAndPublish(String id, String type, URI download, String originalName, long expectedSize) throws Exception {
@@ -124,17 +168,56 @@ public final class SongAssetService {
         }
     }
 
-    private static List<Path> variants(Path directory, String id) throws IOException {
+    private static List<Path> variants(Path directory, String id, Set<String> allowed) throws IOException {
         List<Path> result = new ArrayList<>(); if (!Files.isDirectory(directory)) return result;
         try (java.util.stream.Stream<Path> files = Files.list(directory)) {
-            files.filter(Files::isRegularFile).filter(path -> baseName(path.getFileName().toString()).equals(id)).forEach(result::add);
+            files.filter(Files::isRegularFile)
+                .filter(path -> baseName(path.getFileName().toString()).equals(id))
+                .filter(path -> allowed.contains(extension(path.getFileName().toString())))
+                .forEach(result::add);
         }
         result.sort(Comparator.comparing(Path::toString)); return result;
+    }
+    private static void stageVariants(Path directory, String id, Set<String> allowed, Path backup,
+                                      List<StagedAsset> staged) throws IOException {
+        for (Path source : variants(directory, id, allowed)) {
+            Files.createDirectories(backup);
+            Path saved = backup.resolve(source.getFileName().toString());
+            moveReplacing(source, saved);
+            staged.add(new StagedAsset(source, saved));
+        }
+    }
+    private static void restoreStaged(List<StagedAsset> staged, Exception original) {
+        for (int index = staged.size() - 1; index >= 0; index--) {
+            StagedAsset asset = staged.get(index);
+            try {
+                Files.createDirectories(asset.original.getParent());
+                moveReplacing(asset.backup, asset.original);
+            } catch (Exception restore) { original.addSuppressed(restore); }
+        }
+    }
+    private static void moveReplacing(Path source, Path target) throws IOException {
+        try { Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING); }
+        catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
+            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+        }
     }
     private static String validateId(String value) {
         String safe = value == null ? "" : value.trim(); if (!safe.matches("[0-9]{1,9}")) throw new IllegalArgumentException("歌曲 ID 无效"); return safe;
     }
     private static String extension(String name) { int dot = name == null ? -1 : name.lastIndexOf('.'); return dot < 0 ? "" : name.substring(dot).toLowerCase(Locale.ROOT); }
+    private static String contentType(String extension, boolean image) {
+        if (image) {
+            if (".png".equals(extension)) return "image/png";
+            if (".webp".equals(extension)) return "image/webp";
+            return "image/jpeg";
+        }
+        if (".wav".equals(extension)) return "audio/wav";
+        if (".flac".equals(extension)) return "audio/flac";
+        if (".m4a".equals(extension)) return "audio/mp4";
+        if (".ogg".equals(extension)) return "audio/ogg";
+        return "audio/mpeg";
+    }
     private static boolean validWebp(Path source) throws IOException {
         byte[] header = new byte[12];
         try (InputStream input = Files.newInputStream(source)) {
@@ -152,5 +235,9 @@ public final class SongAssetService {
         try (java.util.stream.Stream<Path> paths = Files.walk(root)) {
             paths.sorted(Comparator.reverseOrder()).forEach(path -> { try { Files.deleteIfExists(path); } catch (IOException ignored) {} });
         } catch (IOException ignored) {}
+    }
+    private static final class StagedAsset {
+        final Path original; final Path backup;
+        StagedAsset(Path original, Path backup) { this.original = original; this.backup = backup; }
     }
 }

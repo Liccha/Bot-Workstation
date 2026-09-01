@@ -11,6 +11,7 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.lang.reflect.Method;
 
 /** Verifies pairing, headers, secret isolation and mobile responsive invariants. */
 public final class MobileControlServerRegressionTest {
@@ -30,7 +31,7 @@ public final class MobileControlServerRegressionTest {
             Response index = request(baseUrl, "GET", "/", null, null);
             require(index.code == 200 && index.body.contains("Bot 工作站"), "mobile index failed");
             require(index.csp != null && index.csp.contains("frame-ancestors 'none'"), "CSP missing");
-            require(!index.body.contains("desktopToken") && !index.body.contains("AccessKey") && !index.body.contains("iamthetrueeditor"), "secret leaked to mobile HTML");
+            require(!index.body.contains("desktopToken") && !index.body.contains("AccessKey") && !index.body.contains("example-admin-passphrase"), "secret leaked to mobile HTML");
 
             Response unauthorized = request(baseUrl, "GET", "/api/status", null, null);
             require(unauthorized.code == 401, "status endpoint is not protected");
@@ -41,7 +42,8 @@ public final class MobileControlServerRegressionTest {
             Response status = request(baseUrl, "GET", "/api/status", null, token);
             require(status.code == 200 && new JSONObject(status.body).has("songBot"), "paired status failed");
             Response songs = request(baseUrl, "GET", "/api/songs?q=&limit=2", null, token);
-            require(songs.code == 200 && new JSONObject(songs.body).getJSONArray("items").length() <= 2, "song data endpoint failed");
+            require(songs.code == 200 && new JSONObject(songs.body).getJSONArray("items").length() <= 2,
+                "song data endpoint failed: HTTP " + songs.code + " " + songs.body);
             Response completeSongs = request(baseUrl, "GET", "/api/songs?q=&limit=5000", null, token);
             JSONObject completePayload = new JSONObject(completeSongs.body);
             require(completeSongs.code == 200 && completePayload.getJSONArray("items").length() > 100,
@@ -50,6 +52,18 @@ public final class MobileControlServerRegressionTest {
                 "mobile song endpoint drops additional nickname fields");
             Response stable = request(baseUrl, "GET", "/api/stable?q=&limit=2", null, token);
             require(stable.code == 200 && new JSONObject(stable.body).getJSONArray("items").length() <= 2, "stable data endpoint failed");
+            Response deleteWithoutId = request(baseUrl, "POST", "/api/song-delete", "{}", token);
+            require(deleteWithoutId.code == 400 && deleteWithoutId.body.contains("歌曲 ID"),
+                "LAN delete route is missing or unsafe");
+
+            server.stopPairing();
+            require(!server.isRunning(), "LAN pairing server did not stop");
+            Method executeRelay = MobileControlServer.class.getDeclaredMethod("executeRelay", JSONObject.class);
+            executeRelay.setAccessible(true);
+            CloudMobileRelay.RelayResponse relayStatus = (CloudMobileRelay.RelayResponse) executeRelay.invoke(server,
+                new JSONObject().put("method", "GET").put("path", "/api/status"));
+            require(relayStatus.status == 200 && relayStatus.body.has("songBot") && relayStatus.body.has("napCat"),
+                "cloud relay still depends on the stopped LAN pairing server");
 
             String css = resource("/mobile/app.css");
             String script = resource("/mobile/app.js");

@@ -74,15 +74,16 @@ public class AnnouncementEditor extends JPanel {
     };
 
     public AnnouncementEditor(Runnable onClose) {
+        this(onClose, defaultSongBotDirectory());
+    }
+
+    public AnnouncementEditor(Runnable onClose, File songBotDir) {
         this.onClose = onClose;
         setLayout(new BorderLayout(0, 10));
         setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         setOpaque(false);
 
-        File desktopDir = javax.swing.filechooser.FileSystemView.getFileSystemView().getHomeDirectory();
-        if (desktopDir == null || !desktopDir.exists())
-            desktopDir = new File(System.getProperty("user.home"));
-        File songBotDir = new File(desktopDir, "SongBot");
+        songBotDir = songBotDir.getAbsoluteFile();
         File dataDir = new File(songBotDir, "data");
         announceAssetDir = new File(songBotDir, "announce_files");
         dataDir.mkdirs();
@@ -91,19 +92,64 @@ public class AnnouncementEditor extends JPanel {
 
         cloudMode = CloudAnnouncementStore.isCloudMode(songBotDir);
         if (cloudMode) {
-            try {
-                cloudStore = CloudAnnouncementStore.fromSongBot(songBotDir);
-                loadFromCloud();
-            } catch (Exception ex) {
-                JOptionPane.showMessageDialog(this,
-                    "云公告服务连接失败，本次不会读取或覆盖本地旧文件：\n" + ex.getMessage(),
-                    "公告服务不可用", JOptionPane.ERROR_MESSAGE);
-            }
+            showCloudLoading(songBotDir);
+            return;
         } else {
             loadFromJson();
         }
         buildMainUI();
         refreshCards();
+    }
+
+    private static File defaultSongBotDirectory() {
+        File desktopDir = javax.swing.filechooser.FileSystemView.getFileSystemView().getHomeDirectory();
+        if (desktopDir == null || !desktopDir.exists()) desktopDir = new File(System.getProperty("user.home"));
+        return new File(desktopDir, "SongBot");
+    }
+
+    private void showCloudLoading(File songBotDir) {
+        JPanel loading = new JPanel(new GridBagLayout());
+        loading.setOpaque(false);
+        JPanel copy = new JPanel();
+        copy.setOpaque(false);
+        copy.setLayout(new BoxLayout(copy, BoxLayout.Y_AXIS));
+        JLabel title = new JLabel("正在读取云端公告…");
+        title.setFont(FONT_LABEL);
+        title.setAlignmentX(Component.CENTER_ALIGNMENT);
+        JProgressBar progress = new JProgressBar();
+        progress.setIndeterminate(true);
+        progress.setPreferredSize(new Dimension(260, 5));
+        progress.setMaximumSize(new Dimension(260, 5));
+        progress.setAlignmentX(Component.CENTER_ALIGNMENT);
+        copy.add(title);
+        copy.add(Box.createVerticalStrut(12));
+        copy.add(progress);
+        loading.add(copy);
+        add(loading, BorderLayout.CENTER);
+
+        new SwingWorker<Void, Void>() {
+            @Override protected Void doInBackground() throws Exception {
+                cloudStore = CloudAnnouncementStore.fromSongBot(songBotDir);
+                loadFromCloud();
+                return null;
+            }
+
+            @Override protected void done() {
+                remove(loading);
+                try {
+                    get();
+                } catch (Exception ex) {
+                    Throwable cause = ex.getCause() == null ? ex : ex.getCause();
+                    JOptionPane.showMessageDialog(AnnouncementEditor.this,
+                        "云公告服务连接失败，本次不会读取或覆盖本地旧文件：\n" + cause.getMessage(),
+                        "公告服务不可用", JOptionPane.ERROR_MESSAGE);
+                }
+                buildMainUI();
+                refreshCards();
+                revalidate();
+                repaint();
+            }
+        }.execute();
     }
 
     // ========== JSON 持久化 ==========

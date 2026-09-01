@@ -21,20 +21,25 @@ public final class SongLibraryActionBarRegressionTest {
             try {
                 JButton cover = UiKit.button("更换歌曲图片");
                 JButton audio = UiKit.button("更换歌曲音频");
+                JButton delete = UiKit.button("删除歌曲");
                 JButton cancel = UiKit.button("取消");
                 JButton save = UiKit.primaryButton("保存修改");
-                JPanel bar = SongLibraryPanel.editorActionBar(cover, audio, cancel, save);
+                JPanel bar = SongLibraryPanel.editorActionBar(cover, audio, delete, cancel, save);
                 bar.setSize(700, 68);
                 layoutRecursively(bar);
 
                 require(cover.getWidth() == audio.getWidth(), "resource actions are not equal width");
                 require(cancel.getWidth() == save.getWidth(), "decision actions are not equal width");
                 require(cover.getX() < audio.getX(), "resource action order changed");
+                require(absoluteX(bar, cover) + cover.getWidth() <= absoluteX(bar, audio), "resource buttons overlap");
                 require(cancel.getX() < save.getX(), "decision action order changed");
                 require(absoluteX(bar, audio) + audio.getWidth() + 16 < absoluteX(bar, cancel),
                     "resource and decision groups no longer have a clear visual break");
                 require(absoluteX(bar, save) + save.getWidth() <= bar.getWidth() - 16,
                     "primary action is not aligned to the right inset");
+                for (JButton button : new JButton[]{cover, audio, delete, cancel, save})
+                    require(button.getPreferredSize().width >= button.getFontMetrics(button.getFont()).stringWidth(button.getText()) + 24,
+                        "button text may be ellipsized: " + button.getText());
                 for (String field : new String[]{"4k_ez", "4k_nm", "4k_hd", "4k_mx", "4k_sp"})
                     require(field.equals(SongLibraryPanel.editorFieldLabel(field)),
                         "difficulty field name was translated: " + field);

@@ -33,10 +33,16 @@ import java.util.Set;
 final class StableRepository {
     private static final List<String> REQUIRED = java.util.Arrays.asList("sid", "title", "artist", "bpm", "length", "creator", "update_time", "cover");
     private final BotPaths paths;
+    private final CloudLibraryClient cloud;
 
-    StableRepository(BotPaths paths) { this.paths = paths; }
+    StableRepository(BotPaths paths) {
+        this.paths = paths;
+        this.cloud = localWorkbookAvailable(paths.stableWorkbook)
+            ? null : new CloudLibraryClient(paths.userState().resolve("library"));
+    }
 
     Snapshot load() throws Exception {
+        if (cloud != null) return cloud.loadStable();
         try (InputStream input = Files.newInputStream(paths.stableWorkbook); Workbook workbook = WorkbookFactory.create(input)) {
             Sheet sheet = workbook.getSheetAt(0); DataFormatter formatter = new DataFormatter(Locale.CHINA);
             Row headerRow = sheet.getRow(0); if (headerRow == null) throw new IllegalStateException("Stable 工作簿没有表头");
@@ -59,6 +65,7 @@ final class StableRepository {
 
     SaveResult save(List<String> headers, List<List<String>> rows) throws Exception {
         validate(headers, rows);
+        if (cloud != null) return saveCloud(headers, rows);
         Files.createDirectories(paths.workstation.resolve("backups"));
         String stamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
         Path backupXlsx = paths.workstation.resolve("backups").resolve("stable_info-" + stamp + ".xlsx");
@@ -67,7 +74,8 @@ final class StableRepository {
         if (Files.exists(paths.stableCsv)) Files.copy(paths.stableCsv, backupCsv, StandardCopyOption.REPLACE_EXISTING);
         Path tempXlsx = paths.stableWorkbook.resolveSibling(paths.stableWorkbook.getFileName() + ".botstation.tmp");
         Path tempCsv = paths.stableCsv.resolveSibling(paths.stableCsv.getFileName() + ".botstation.tmp");
-        writeWorkbook(tempXlsx, headers, rows); writeCsv(tempCsv, headers, rows);
+        List<List<String>> persistedRows = rowsForPersistence(headers, rows, paths.desktop.resolve("stable_cover"));
+        writeWorkbook(tempXlsx, headers, rows); writeCsv(tempCsv, headers, persistedRows);
 
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + paths.songDatabase.toAbsolutePath())) {
             connection.setAutoCommit(false);
@@ -76,7 +84,7 @@ final class StableRepository {
                 try (Statement clear = connection.createStatement()) { clear.executeUpdate("DELETE FROM stable_info"); }
                 String sql = "INSERT INTO stable_info (sid,title,artist,bpm,length,creator,update_time,cover) VALUES (?,?,?,?,?,?,?,?)";
                 try (PreparedStatement insert = connection.prepareStatement(sql)) {
-                    for (List<String> row : rows) {
+                    for (List<String> row : persistedRows) {
                         for (int i = 0; i < REQUIRED.size(); i++) insert.setString(i + 1, value(row, indexIgnoreCase(headers, REQUIRED.get(i))));
                         insert.addBatch();
                     }
@@ -92,6 +100,45 @@ final class StableRepository {
             } finally { connection.setAutoCommit(true); Files.deleteIfExists(tempXlsx); Files.deleteIfExists(tempCsv); }
         }
         return new SaveResult(rows.size(), backupXlsx);
+    }
+
+    boolean cloudMode() { return cloud != null; }
+
+    private SaveResult saveCloud(List<String> headers, List<List<String>> rows) throws Exception {
+        Snapshot current = cloud.loadStable();
+        int sidColumn = indexIgnoreCase(headers, "sid");
+        int currentSidColumn = indexIgnoreCase(current.headers, "sid");
+        java.util.Map<String, List<String>> currentById = new java.util.LinkedHashMap<>();
+        for (List<String> row : current.rows) currentById.put(value(row, currentSidColumn).trim(), row);
+        for (List<String> row : rows) {
+            String sid = value(row, sidColumn).trim();
+            if (!currentById.containsKey(sid)) {
+                throw new IllegalArgumentException("云端 Stable 暂不支持新增 SID " + sid + "；现有记录仍可编辑");
+            }
+        }
+        if (rows.size() != current.rows.size()) {
+            throw new IllegalArgumentException("云端 Stable 暂不支持删除记录；现有记录仍可编辑");
+        }
+        for (List<String> row : rows) {
+            String sid = value(row, sidColumn).trim();
+            List<String> before = currentById.get(sid);
+            java.util.Map<String, String> changed = new java.util.LinkedHashMap<>();
+            for (int column = 0; column < headers.size(); column++) {
+                String header = headers.get(column);
+                if (header.equalsIgnoreCase("sid")) continue;
+                int oldColumn = indexIgnoreCase(current.headers, header);
+                if (oldColumn < 0) continue;
+                String next = value(row, column);
+                if (!next.equals(value(before, oldColumn))) changed.put(header, next);
+            }
+            if (!changed.isEmpty()) cloud.updateStable(sid, changed);
+        }
+        return new SaveResult(rows.size(), paths.userState().resolve("library").resolve("cloud-version"));
+    }
+
+    private static boolean localWorkbookAvailable(Path workbook) {
+        try { return Files.isRegularFile(workbook) && Files.size(workbook) > 0; }
+        catch (Exception ignored) { return false; }
     }
 
     private void writeWorkbook(Path output, List<String> headers, List<List<String>> rows) throws Exception {
@@ -144,6 +191,32 @@ final class StableRepository {
         return String.join(",", escaped);
     }
 
+    private static List<List<String>> rowsForPersistence(List<String> headers, List<List<String>> rows, Path coverDirectory) {
+        int sidColumn = indexIgnoreCase(headers, "sid");
+        int coverColumn = indexIgnoreCase(headers, "cover");
+        List<List<String>> result = new ArrayList<>();
+        for (List<String> source : rows) {
+            List<String> row = new ArrayList<>(source);
+            while (row.size() < headers.size()) row.add("");
+            if (sidColumn >= 0 && coverColumn >= 0) {
+                row.set(coverColumn, canonicalCoverForPersistence(
+                    value(source, coverColumn), value(source, sidColumn), coverDirectory));
+            }
+            result.add(row);
+        }
+        return result;
+    }
+
+    static String canonicalCoverForPersistence(String current, String sid, Path coverDirectory) {
+        String raw = current == null ? "" : current.trim();
+        if (raw.isEmpty() || sid == null || sid.trim().isEmpty()) return raw;
+        String lower = raw.toLowerCase(Locale.ROOT);
+        boolean generated = raw.equalsIgnoreCase("AUTO")
+            || (lower.contains("stable_cover") && lower.contains(".webp") && lower.matches(".*&a\\d+&.*"));
+        if (!generated) return raw;
+        return coverDirectory.resolve(sid.trim() + ".webp").toAbsolutePath().normalize().toString();
+    }
+
     private static void validate(List<String> headers, List<List<String>> rows) {
         if (rows == null || rows.isEmpty()) {
             throw new IllegalArgumentException("Stable 曲库不能为空；已取消保存并保留现有数据");
@@ -167,6 +240,9 @@ final class StableRepository {
     }
     static String displayValue(Cell cell, String header, DataFormatter formatter) {
         if (cell == null) return "";
+        if ("cover".equalsIgnoreCase(String.valueOf(header)) && cell.getCellType() == CellType.FORMULA) {
+            return "AUTO";
+        }
         if ("update_time".equalsIgnoreCase(String.valueOf(header))
             && cell.getCellType() == CellType.NUMERIC && DateUtil.isCellDateFormatted(cell)) {
             return cell.getLocalDateTimeCellValue().toLocalDate().format(DateTimeFormatter.ISO_LOCAL_DATE);

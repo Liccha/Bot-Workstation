@@ -1,6 +1,7 @@
 package com.botstation.mobile;
 
 import com.botstation.core.BotPaths;
+import com.botstation.core.CloudEndpoints;
 import com.botstation.core.LogBus;
 import com.botstation.features.MobileDataService;
 import org.json.JSONArray;
@@ -23,6 +24,7 @@ import java.util.Locale;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Pulls cloud edits into the local DB/CSV used by the desktop editor and SongBot. */
@@ -34,17 +36,19 @@ final class CloudLibrarySync implements AutoCloseable {
     private final MobileDataService data;
     private final Path stateFile;
     private final LogBus log;
+    private final Publication publisher;
     private final AtomicBoolean running = new AtomicBoolean();
     private ExecutorService worker;
     private volatile String lastError = "";
 
     private CloudLibrarySync(URI endpoint, String desktopToken, MobileDataService data,
-                             Path stateFile, LogBus log) {
+                             Path stateFile, LogBus log, Publication publisher) {
         this.endpoint = validateEndpoint(endpoint);
         this.desktopToken = desktopToken;
         this.data = data;
         this.stateFile = stateFile;
         this.log = log;
+        this.publisher = publisher;
     }
 
     static CloudLibrarySync fromSongBot(BotPaths paths, LogBus log) throws IOException {
@@ -55,15 +59,23 @@ final class CloudLibrarySync implements AutoCloseable {
         String api = properties.getProperty("api", "").trim();
         String token = properties.getProperty("desktopToken", "").trim();
         if (api.isEmpty() || token.isEmpty()) return null;
-        URI announcement = URI.create(api);
+        URI announcement = CloudEndpoints.migrateLegacy(URI.create(api));
         URI endpoint = URI.create(announcement.getScheme() + "://" + announcement.getRawAuthority() + "/api/mobile-data");
+        Path workflow = paths.songBot.resolve("song-library").resolve("tools").resolve("sync_build_publish.py");
+        Publication publication = Files.isRegularFile(workflow)
+            ? () -> runPublisher(paths.songBot, workflow) : null;
         return new CloudLibrarySync(endpoint, token, new MobileDataService(paths),
-            paths.config().resolve("mobile-library-sync.json"), log);
+            paths.config().resolve("mobile-library-sync.json"), log, publication);
     }
 
     static CloudLibrarySync forTest(URI endpoint, String desktopToken, MobileDataService data,
                                     Path stateFile, LogBus log) {
-        return new CloudLibrarySync(endpoint, desktopToken, data, stateFile, log);
+        return new CloudLibrarySync(endpoint, desktopToken, data, stateFile, log, null);
+    }
+
+    static CloudLibrarySync forTest(URI endpoint, String desktopToken, MobileDataService data,
+                                    Path stateFile, LogBus log, Publication publisher) {
+        return new CloudLibrarySync(endpoint, desktopToken, data, stateFile, log, publisher);
     }
 
     synchronized void start() {
@@ -81,11 +93,19 @@ final class CloudLibrarySync implements AutoCloseable {
         JSONObject state = readState();
         long songsBefore = state.optLong("songs", 0L);
         long stableBefore = state.optLong("stable", 0L);
-        boolean changed = false;
-        changed |= syncDataset("songs", state);
-        changed |= syncDataset("stable", state);
+        boolean songsChanged = syncDataset("songs", state);
+        boolean stableChanged = syncDataset("stable", state);
+        boolean changed = songsChanged || stableChanged;
         if (changed || songsBefore != state.optLong("songs", 0L)
             || stableBefore != state.optLong("stable", 0L)) writeState(state);
+        long songsRevision = state.optLong("songs", 0L);
+        if (publisher != null && songsRevision > 0L
+            && state.optLong("publishedSongs", -1L) < songsRevision) {
+            publisher.run();
+            state.put("publishedSongs", songsRevision);
+            writeState(state);
+            log.info("云端曲库", "歌曲媒体与公开曲库已发布至版本 " + songsRevision);
+        }
     }
 
     private boolean syncDataset(String dataset, JSONObject state) throws Exception {
@@ -101,7 +121,9 @@ final class CloudLibrarySync implements AutoCloseable {
                     String id = item.optString("id", "").trim();
                     JSONObject values = item.optJSONObject("values");
                     if (id.isEmpty() || values == null) throw new IOException("云端变更格式无效");
-                    if ("songs".equals(dataset)) data.updateSong(id, values);
+                    if ("songs".equals(dataset) && item.optBoolean("deleted", false)) data.deleteSong(id);
+                    else if ("songs".equals(dataset) && item.optBoolean("created", false)) data.createSong(id, values);
+                    else if ("songs".equals(dataset)) data.updateSong(id, values);
                     else data.updateStable(id, values);
                     applied++;
                 }
@@ -179,6 +201,35 @@ final class CloudLibrarySync implements AutoCloseable {
         }
     }
 
+    private static void runPublisher(Path songBot, Path workflow) throws Exception {
+        ProcessBuilder builder = new ProcessBuilder("python", workflow.toString());
+        builder.directory(songBot.resolve("song-library").toFile());
+        builder.redirectErrorStream(true);
+        builder.environment().put("PYTHONIOENCODING", "utf-8");
+        Process process = builder.start();
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        Thread reader = new Thread(() -> {
+            try (InputStream input = process.getInputStream()) {
+                byte[] buffer = new byte[4096];
+                for (int count; (count = input.read(buffer)) >= 0 && output.size() < 32 * 1024; )
+                    output.write(buffer, 0, Math.min(count, 32 * 1024 - output.size()));
+            } catch (IOException ignored) {}
+        }, "cloud-library-publisher-output");
+        reader.setDaemon(true);
+        reader.start();
+        if (!process.waitFor(60, TimeUnit.MINUTES)) {
+            process.destroyForcibly();
+            throw new IOException("公开曲库发布超时");
+        }
+        reader.join(5_000L);
+        if (process.exitValue() != 0) {
+            String message = new String(output.toByteArray(), StandardCharsets.UTF_8)
+                .replaceAll("[\\r\\n]+", " ").trim();
+            if (message.length() > 600) message = message.substring(message.length() - 600);
+            throw new IOException("公开曲库发布失败" + (message.isBlank() ? "" : "：" + message));
+        }
+    }
+
     private static String readLimited(InputStream input) throws IOException {
         try (InputStream source = input; ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192];
@@ -197,8 +248,7 @@ final class CloudLibrarySync implements AutoCloseable {
             || !"/api/mobile-data".equals(value.getPath())) throw new IllegalArgumentException("云端曲库地址无效");
         String scheme = String.valueOf(value.getScheme()).toLowerCase(Locale.ROOT);
         String host = value.getHost().toLowerCase(Locale.ROOT);
-        boolean production = "https".equals(scheme)
-            && ("editor.teacharm.moe".equals(host) || "bot-editor.vercel.app".equals(host));
+        boolean production = "https".equals(scheme) && CloudEndpoints.isProductionHost(host);
         boolean local = "http".equals(scheme) && ("127.0.0.1".equals(host) || "localhost".equals(host));
         if (!production && !local) throw new IllegalArgumentException("云端曲库必须使用受信任的 HTTPS 域名");
         return value;
@@ -222,4 +272,7 @@ final class CloudLibrarySync implements AutoCloseable {
             worker = null;
         }
     }
+
+    @FunctionalInterface
+    interface Publication { void run() throws Exception; }
 }

@@ -33,6 +33,22 @@ public final class SongLibraryPersistenceRegressionTest {
         require(text.contains("\"新歌名, 含逗号\""), "CSV quoting or persistence failed");
         require(text.contains("完整昵称"), "nickname was not persisted to CSV");
         require(text.contains("2,保留歌曲"), "unrelated CSV rows were damaged");
+        Map<String, String> created = new LinkedHashMap<>();
+        created.put("song_name", "云端新歌"); created.put("author", "新作者");
+        repository.create("id", "1273", created);
+        SongLibraryRepository.Snapshot afterCreate = repository.load();
+        require(afterCreate.rows.stream().anyMatch(row -> "1273".equals(row.get("id"))
+            && "云端新歌".equals(row.get("song_name"))), "new cloud row was not inserted into SQLite");
+        require(Files.readString(csv, StandardCharsets.UTF_8).contains("1273,云端新歌,新作者"),
+            "new cloud row was not appended to CSV");
+        repository.delete("id", "1273");
+        require(repository.load().rows.stream().noneMatch(row -> "1273".equals(row.get("id"))),
+            "deleted song still exists in SQLite");
+        require(!Files.readString(csv, StandardCharsets.UTF_8).contains("1273,云端新歌,新作者"),
+            "deleted song still exists in CSV");
+        repository.create("id", "1273", Map.of("song_name", "复用已释放 ID", "author", "另一作者"));
+        require(repository.load().rows.stream().anyMatch(row -> "1273".equals(row.get("id"))
+            && "复用已释放 ID".equals(row.get("song_name"))), "released song ID could not be reused");
         System.out.println("SONG_PERSISTENCE_GREEN");
     }
 

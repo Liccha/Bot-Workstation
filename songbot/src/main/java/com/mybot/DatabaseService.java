@@ -584,12 +584,9 @@ public class DatabaseService {
             pstmt.setString(1, id);
             ResultSet rs = pstmt.executeQuery();
             if (rs.next()) {
-                // Build a portable path; production may override the directory.
-                String configuredDir = System.getenv("SONGBOT_DAILY_SONG_DIR");
-                File dailySongDir = configuredDir == null || configuredDir.isBlank()
-                        ? new File(System.getProperty("user.home"), "BotWorkstation/DailySongs")
-                        : new File(configuredDir);
-                String dynamicPath = new File(dailySongDir, id + ".mp3").getPath();
+                // 动态构建路径：C:/Users/.../DailySongs/ID.mp3
+                // 注意：这里构建的是“原始ID路径”，发完改名是之后的事
+                String dynamicPath = "C:\\Users\\12269\\Desktop\\DailySongs\\" + id + ".mp3";
                 return new DailySong(
                         rs.getString("date"), // ID
                         rs.getString("song_name"),
@@ -1157,12 +1154,8 @@ public class DatabaseService {
             ResultSet rs = pstmt.executeQuery();
             if (rs.next()) {
                 // ✅ 关键修改：不再查不存在的 "audio_path" 列
-                // The public build is portable: deployments may override this directory.
-                String configuredDir = System.getenv("SONGBOT_DAILY_SONG_DIR");
-                File dailySongDir = configuredDir == null || configuredDir.isBlank()
-                        ? new File(System.getProperty("user.home"), "BotWorkstation/DailySongs")
-                        : new File(configuredDir);
-                String generatedPath = new File(dailySongDir, rs.getInt("id") + ".mp3").getPath();
+                // 直接根据 ID 拼接出文件路径： dailysongs/1.mp3
+                String generatedPath = "C:\\Users\\12269\\Desktop\\DailySongs\\" + rs.getInt("id") + ".mp3";
 
                 return new DailySong(
                         String.valueOf(rs.getInt("id")),

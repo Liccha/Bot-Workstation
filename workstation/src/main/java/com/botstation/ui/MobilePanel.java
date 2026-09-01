@@ -129,7 +129,7 @@ final class MobilePanel extends JPanel implements AutoCloseable {
             }
         }.execute();
     }
-    private void disableServer() { server.close(); address.setText("—"); code.setText("—— —— ——"); state.setText("未启用"); start.setEnabled(true); stop.setEnabled(false); copy.setEnabled(false); }
+    private void disableServer() { server.stopPairing(); address.setText("—"); code.setText("—— —— ——"); state.setText("未启用"); start.setEnabled(true); stop.setEnabled(false); copy.setEnabled(false); }
     private static String format(String value) { return value.length() == 6 ? value.substring(0, 2) + " " + value.substring(2, 4) + " " + value.substring(4) : value; }
     @Override public void close() { server.close(); }
 }

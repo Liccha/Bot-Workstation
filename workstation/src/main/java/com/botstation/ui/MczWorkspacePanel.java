@@ -3,6 +3,7 @@ package com.botstation.ui;
 import com.botstation.core.BotPaths;
 import com.botstation.core.LogBus;
 import com.botstation.core.TaskRunner;
+import com.botstation.features.MczCloudSongService;
 import com.mcz.MczEmbedBridge;
 
 import javax.swing.BorderFactory;
@@ -25,22 +26,15 @@ final class MczWorkspacePanel extends JPanel {
         title.setForeground(DesignTokens.INK);
         strip.add(title, BorderLayout.WEST);
         add(strip, BorderLayout.NORTH);
-        if (!Files.isDirectory(paths.mczMaker)) {
-            JPanel missing = UiKit.card();
-            missing.add(UiKit.section("未找到 MczMaker 组件"), BorderLayout.NORTH);
-            missing.add(UiKit.muted("请将 MczMaker 文件夹放到 " + paths.mczMaker
-                + "，或通过 BOT_WORKSTATION_MCZ 指定位置。"), BorderLayout.CENTER);
-            missing.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createEmptyBorder(24, 24, 24, 24), DesignTokens.cardBorder()));
-            add(missing, BorderLayout.CENTER);
-            log.warn("MczMaker", "组件目录不存在：" + paths.mczMaker);
-            return;
-        }
         JPanel loading = UiKit.card();
         loading.add(UiKit.section("正在载入谱面库…"), BorderLayout.NORTH);
-        loading.add(UiKit.muted("首次载入会初始化音频与制图组件，界面可以继续操作。"), BorderLayout.CENTER);
+        loading.add(UiKit.muted("正在初始化音频、制图与日历组件。"), BorderLayout.CENTER);
         add(loading, BorderLayout.CENTER);
-        tasks.run(() -> MczEmbedBridge.create(paths.mczMaker), embedded -> {
+        tasks.run(() -> {
+            Files.createDirectories(paths.mczMaker);
+            return MczEmbedBridge.create(paths.mczMaker, new MczCloudSongService(paths),
+                message -> log.info("谱面曲库", message));
+        }, embedded -> {
             remove(loading);
             add(embedded, BorderLayout.CENTER);
             revalidate(); repaint();

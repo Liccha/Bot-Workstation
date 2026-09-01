@@ -7,6 +7,7 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.js",
+    "build:fc": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-fc-package.ps1",
     "preflight:announcements": "node scripts/preflight-announcements.mjs",
     "migrate:announcements": "node scripts/migrate-announcements.mjs",
     "migrate:website": "node scripts/migrate-website-posts.mjs",

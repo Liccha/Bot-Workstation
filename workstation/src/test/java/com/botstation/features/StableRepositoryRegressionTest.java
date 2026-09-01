@@ -5,6 +5,7 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.time.LocalDateTime;
+import java.nio.file.Path;
 import java.util.Locale;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellStyle;
@@ -35,7 +36,17 @@ public final class StableRepositoryRegressionTest {
             cell.setCellStyle(style);
             String displayed = StableRepository.displayValue(cell, "update_time", new DataFormatter(Locale.US));
             require("2026-07-27".equals(displayed), "Stable date is not normalized: " + displayed);
+
+            Cell cover = workbook.getSheetAt(0).createRow(1).createCell(0);
+            cover.setCellFormula("\"C:/stable_cover/\" & A2 & \".webp\"");
+            require("AUTO".equals(StableRepository.displayValue(cover, "cover", new DataFormatter(Locale.US))),
+                "Stable formula cover should be presented as AUTO in the editor");
         }
+        Path coverDirectory = Path.of("C:/fixture/stable_cover");
+        String legacy = "\"C:/fixture/stable_cover/\"&A2&\".webp\"";
+        String persisted = StableRepository.canonicalCoverForPersistence(legacy, "12518", coverDirectory);
+        require(persisted.replace('\\', '/').endsWith("/stable_cover/12518.webp"),
+            "Stable CSV retained an uncalculated spreadsheet formula: " + persisted);
         System.out.println("STABLE_REPOSITORY_GREEN");
     }
 

@@ -88,6 +88,25 @@ test('desktop password grant permanently trusts only the edge-observed IP finger
   assert.match(document.fingerprints[0].fingerprint, /^[a-f0-9]{64}$/);
 });
 
+test('clean workstation unlocks through cloud password without a bundled secret file', async () => {
+  const headers = {
+    'x-admin-device': 'clean-workstation',
+    'x-vercel-forwarded-for': '203.0.113.41'
+  };
+  assert.deepEqual((await call('GET', 'workstation-admin-check', { headers })).body, { admin: false });
+  assert.deepEqual((await call('POST', 'workstation-admin-grant', {
+    headers, body: { d: 'clean-workstation', p: 'wrongpassword' }
+  })).body, { admin: false });
+  assert.deepEqual((await call('POST', 'workstation-admin-grant', {
+    headers, body: { d: 'clean-workstation', p: password }
+  })).body, { admin: true });
+  assert.deepEqual((await call('GET', 'workstation-admin-check', { headers })).body, { admin: true });
+  assert.deepEqual((await call('GET', 'workstation-admin-check', { headers: {
+    'x-admin-device': 'same-network-new-install',
+    'x-vercel-forwarded-for': '203.0.113.41'
+  } })).body, { admin: true });
+});
+
 test('Unicode attachment names survive ticketing, persistence, and legacy recovery', async () => {
   const desktopHeaders = { authorization: 'Desktop desktop-token-for-tests-only', 'x-admin-device': 'filename-test' };
   const ticket = await call('POST', 'upload-ticket', { headers: desktopHeaders, body: {
@@ -138,6 +157,41 @@ test('announcement lifecycle uses per-record revisions and soft delete', async (
   assert.equal(removed.status, 200);
   const list = await call('GET', 'list', { headers });
   assert.deepEqual(list.body, []);
+});
+
+test('concurrent duplicate creates collapse to one scheduled announcement and keep the richer attachment', async () => {
+  const desktopHeaders = { authorization: 'Desktop desktop-token-for-tests-only', 'x-admin-device': 'duplicate-create-test' };
+  const attachment = 'uploads/ann_duplicate_test/attach/00000000-0000-4000-8000-000000000001-package.mcb';
+  await getStore().put(attachment, Buffer.from('package'));
+  const base = {
+    groupId: '2000000004',
+    title: '幂等公告',
+    content: '幂等公告\n同一正文',
+    time: '2026-09-01 15:00',
+    pin: 'false',
+    confirm: 'false'
+  };
+
+  const results = await Promise.all([
+    call('POST', 'announcement', { headers: desktopHeaders, body: base }),
+    call('POST', 'announcement', { headers: desktopHeaders, body: {
+      ...base,
+      attach: attachment,
+      attachmentNames: ['package.mcb']
+    } })
+  ]);
+
+  assert.deepEqual(results.map(result => result.status).sort(), [200, 201]);
+  assert.equal(results[0].body.id, results[1].body.id);
+  const list = await call('GET', 'list', { headers: desktopHeaders });
+  const matches = list.body.filter(item => item.time === base.time && item.groupId === base.groupId && item.content === base.content);
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].attach, attachment);
+  assert.deepEqual(matches[0].attachmentNames, ['package.mcb']);
+  assert.equal((await call('DELETE', 'announcement', {
+    headers: desktopHeaders,
+    query: { id: matches[0].id, revision: matches[0].revision }
+  })).status, 200);
 });
 
 test('bot claim is leased and completion prevents a second send', async () => {
@@ -211,6 +265,42 @@ test('teacharm website posts use the cloud store with revisions and safe names',
   });
   assert.equal(removed.status, 200);
   assert.equal((await call('GET', 'website-read', { headers: desktopHeaders, query: { name } })).status, 404);
+});
+
+test('unchanged website mirror checks use only the tiny revision marker', async () => {
+  const desktopHeaders = { authorization: 'Desktop desktop-token-for-tests-only', 'x-admin-device': 'website-sync-test' };
+  const created = await call('POST', 'website-save', {
+    headers: desktopHeaders,
+    body: { name: '同步快照.md', content: '只应在版本变化时读取正文' }
+  });
+  assert.equal(created.status, 200);
+
+  const initial = await call('GET', 'website-sync', { headers: desktopHeaders, query: { after: 0 } });
+  assert.equal(initial.status, 200);
+  assert.equal(initial.body.unchanged, false);
+  assert.ok(initial.body.posts.some(post => post.name === '同步快照.md'));
+
+  const store = getStore();
+  const originalGet = store.get.bind(store);
+  let fullDocumentReads = 0;
+  store.get = async key => {
+    if (key === 'website/teacharm.moe/posts/current.json') fullDocumentReads++;
+    return originalGet(key);
+  };
+  try {
+    const unchanged = await call('GET', 'website-sync', {
+      headers: desktopHeaders,
+      query: { after: initial.body.revision }
+    });
+    assert.equal(unchanged.status, 200);
+    assert.equal(unchanged.body.revision, initial.body.revision);
+    assert.equal(unchanged.body.updatedAt, initial.body.updatedAt);
+    assert.equal(unchanged.body.unchanged, true);
+    assert.deepEqual(unchanged.body.posts, []);
+    assert.equal(fullDocumentReads, 0);
+  } finally {
+    store.get = originalGet;
+  }
 });
 
 test('website post APIs reject unauthenticated callers', async () => {

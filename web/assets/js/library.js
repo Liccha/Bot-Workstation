@@ -19,6 +19,7 @@ applyFiltersCSS();
 var _cacheVersion="v3-content-addressed";
 var _LIBRARY_GITHUB_DATA="https://raw.githubusercontent.com/Liccha/song-library/master/data/songs.json";
 var _LIBRARY_PRIMARY_DATA=String(window.SONG_LIBRARY_PRIMARY_DATA_URL||"").trim();
+var _LIBRARY_RELEASE_POINTER=String(window.SONG_LIBRARY_RELEASE_POINTER_URL||"").trim();
 
 // ---- 持久化资源缓存：限制磁盘条目和内存 Blob 数，避免 iOS 长时间浏览后内存失控 ----
 var _assetCache=null,_assetCachePruned=false,_blobUrls={},_blobOrder=[],_assetPending={};
@@ -85,24 +86,42 @@ function loadAsset(url,onDone,fallbackUrl){
  });
 }
 
-async function _fetchLibraryJson(url,timeoutMs){
+async function _fetchJsonResponse(url,timeoutMs,cacheMode){
  var controller=typeof AbortController==='function'?new AbortController():null;
  var timer=controller?setTimeout(function(){controller.abort()},timeoutMs||6000):0;
  try{
-  var options={cache:'no-cache',referrerPolicy:'strict-origin-when-cross-origin'};
+  var options={cache:cacheMode||'no-cache',referrerPolicy:'strict-origin-when-cross-origin'};
   if(controller)options.signal=controller.signal;
   var response=await fetch(url,options);
   if(!response.ok)throw new Error('HTTP '+response.status);
-  var data=await response.json();
-  if(!Array.isArray(data)||!data.length)throw new Error('歌曲数据格式无效');
-  return data;
+  return response.json();
  }finally{if(timer)clearTimeout(timer)}
 }
 
+async function _fetchLibraryJson(url,timeoutMs,cacheMode){
+ var data=await _fetchJsonResponse(url,timeoutMs,cacheMode);
+ if(!Array.isArray(data)||!data.length)throw new Error('歌曲数据格式无效');
+ return data;
+}
+
+async function _resolvePrimaryLibraryUrl(){
+ if(!_LIBRARY_RELEASE_POINTER)return _LIBRARY_PRIMARY_DATA;
+ var state=await _fetchJsonResponse(_LIBRARY_RELEASE_POINTER,1800,'no-cache');
+ var release=String(state&&state.release||'').trim();
+ if(!/^data\/releases\/songs-[a-f0-9]{16}\.json$/.test(release))throw new Error('曲库版本指针无效');
+ return new URL('/'+release,_LIBRARY_RELEASE_POINTER).toString();
+}
+
 async function _fetchCurrentLibrary(){
- if(_LIBRARY_PRIMARY_DATA){
-  try{return await _fetchLibraryJson(_LIBRARY_PRIMARY_DATA,6000)}catch(e){
-   if(window.console&&console.warn)console.warn('[曲库] 云端不可用，切换 GitHub 备份',e&&e.message||e);
+ if(_LIBRARY_RELEASE_POINTER||_LIBRARY_PRIMARY_DATA){
+  try{
+   var primary=await _resolvePrimaryLibraryUrl();
+   return await _fetchLibraryJson(primary,6000,_LIBRARY_RELEASE_POINTER? 'force-cache':'no-cache');
+  }catch(e){
+   if(_LIBRARY_PRIMARY_DATA){
+    try{return await _fetchLibraryJson(_LIBRARY_PRIMARY_DATA,6000,'no-cache')}
+    catch(primaryError){if(window.console&&console.warn)console.warn('[曲库] 国内主索引不可用，切换 GitHub 备份',primaryError&&primaryError.message||primaryError)}
+   }else if(window.console&&console.warn)console.warn('[曲库] 云端不可用，切换 GitHub 备份',e&&e.message||e);
   }
  }
  return _fetchLibraryJson(_LIBRARY_GITHUB_DATA,12000);

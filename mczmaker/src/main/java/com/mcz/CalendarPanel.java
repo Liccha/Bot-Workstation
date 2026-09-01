@@ -1311,7 +1311,7 @@ public class CalendarPanel extends JPanel {
             if (isBlurring) {
                 g2d.setColor(new Color(0, 0, 0, 100)); g2d.fillRect(0, 0, CW, CH);
                 g2d.setColor(Color.WHITE); g2d.setFont(new Font("Microsoft YaHei", Font.BOLD, 24));
-                g2d.drawString("远程处理图片中……", CW/2 - 180, CH/2 + 50);
+                g2d.drawString("Liccha远程处理图片中......", CW/2 - 180, CH/2 + 50);
             }
             g2d.dispose();
 

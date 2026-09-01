@@ -26,50 +26,66 @@ public class ExcelManager {
     }
 public static void initExcel(MczTool parent) {
     File localFile = getDesktopExcelFile();
+    XSSFWorkbook localWorkbook = null;
+    XSSFWorkbook bundledWorkbook = null;
     if (localFile.exists()) {
         try (FileInputStream fis = new FileInputStream(localFile)) {
-            parent.currentWorkbook = new XSSFWorkbook(fis);
-            return;
+            localWorkbook = new XSSFWorkbook(fis);
         } catch (Exception e) {
             System.err.println("警告：读取本地 Excel 失败，尝试内嵌备份: " + e.getMessage());
         }
     }
-    try {
-        java.io.InputStream is = MczTool.class.getResourceAsStream("/songs.xlsx");
+    try (java.io.InputStream is = MczTool.class.getResourceAsStream("/songs.xlsx")) {
         if (is != null) {
-            parent.currentWorkbook = new XSSFWorkbook(is);
-            is.close();
-            return;
+            bundledWorkbook = new XSSFWorkbook(is);
         }
     } catch (Exception e) {
         System.err.println("警告：加载内嵌 Excel 失败: " + e.getMessage());
     }
-    parent.currentWorkbook = new XSSFWorkbook();
-    parent.currentWorkbook.createSheet("Sheet0");
+    parent.currentWorkbook = chooseNewestWorkbook(localWorkbook, bundledWorkbook);
+    closeIfUnused(localWorkbook, parent.currentWorkbook);
+    closeIfUnused(bundledWorkbook, parent.currentWorkbook);
+    if (parent.currentWorkbook == null) {
+        parent.currentWorkbook = new XSSFWorkbook();
+        parent.currentWorkbook.createSheet("Sheet0");
+    }
+}
+
+static XSSFWorkbook chooseNewestWorkbook(XSSFWorkbook localWorkbook, XSSFWorkbook bundledWorkbook) {
+    if (localWorkbook == null) return bundledWorkbook;
+    if (bundledWorkbook == null) return localWorkbook;
+    return readMaxId(localWorkbook) >= readMaxId(bundledWorkbook) ? localWorkbook : bundledWorkbook;
+}
+
+private static void closeIfUnused(XSSFWorkbook candidate, XSSFWorkbook selected) {
+    if (candidate == null || candidate == selected) return;
+    try { candidate.close(); } catch (Exception ignored) { }
+}
+
+static int readMaxId(XSSFWorkbook workbook) {
+    if (workbook == null || workbook.getNumberOfSheets() == 0) return 0;
+    int maxId = 0;
+    Sheet sheet = workbook.getSheetAt(0);
+    DataFormatter fmt = new DataFormatter();
+    for (int i = 0; i <= sheet.getLastRowNum(); i++) {
+        Row row = sheet.getRow(i);
+        if (row == null) continue;
+        String value = fmt.formatCellValue(row.getCell(0)).trim();
+        try { maxId = Math.max(maxId, Integer.parseInt(value)); }
+        catch (NumberFormatException ignored) { }
+    }
+    return maxId;
 }
 
 // 【新增】读取 songs.xlsx 第 0 列中最大的纯数字 ID
 public static int readMaxIdFromExcel(MczTool parent) {
     if (parent.currentWorkbook == null) return 0;
-    int maxId = 0;
     try {
-        Sheet sheet = parent.currentWorkbook.getSheetAt(0);
-        DataFormatter fmt = new DataFormatter();
-        for (int i = 0; i <= sheet.getLastRowNum(); i++) {
-            Row r = sheet.getRow(i);
-            if (r == null) continue;
-            String val = fmt.formatCellValue(r.getCell(0)).trim();
-            if (!val.isEmpty()) {
-                try {
-                    int id = Integer.parseInt(val);
-                    if (id > maxId) maxId = id;
-                } catch (NumberFormatException ignored) {}
-            }
-        }
+        return readMaxId(parent.currentWorkbook);
     } catch (Exception e) {
         System.err.println("警告：读取 Excel 最大 ID 失败: " + e.getMessage());
     }
-    return maxId;
+    return 0;
 }
 
 public static void refreshIdHint(MczTool parent) {
@@ -84,6 +100,123 @@ public static void refreshIdHint(MczTool parent) {
             }
         });
     });
+}
+
+/** Convert a generated row to the workbook's real column names. */
+public static Map<String, String> rowValues(MczTool parent, String[] values) {
+    LinkedHashMap<String, String> result = new LinkedHashMap<>();
+    if (parent.currentWorkbook == null || parent.currentWorkbook.getNumberOfSheets() == 0) return result;
+    Row header = parent.currentWorkbook.getSheetAt(0).getRow(0);
+    if (header == null) return result;
+    DataFormatter formatter = new DataFormatter();
+    int count = Math.min(values == null ? 0 : values.length, Math.max(0, header.getLastCellNum()));
+    for (int column = 0; column < count; column++) {
+        String name = formatter.formatCellValue(header.getCell(column)).trim();
+        if (!name.isEmpty() && !"id".equalsIgnoreCase(name))
+            result.put(name, values[column] == null ? "" : values[column]);
+    }
+    return result;
+}
+
+/** Convert an existing workbook row to a cloud update document. */
+public static Map<String, String> rowValues(MczTool parent, Row row) {
+    LinkedHashMap<String, String> result = new LinkedHashMap<>();
+    if (row == null || parent.currentWorkbook == null || parent.currentWorkbook.getNumberOfSheets() == 0) return result;
+    Row header = parent.currentWorkbook.getSheetAt(0).getRow(0);
+    if (header == null) return result;
+    DataFormatter formatter = new DataFormatter();
+    for (int column = 0; column < Math.max(0, header.getLastCellNum()); column++) {
+        String name = formatter.formatCellValue(header.getCell(column)).trim();
+        if (!name.isEmpty() && !"id".equalsIgnoreCase(name))
+            result.put(name, formatter.formatCellValue(row.getCell(column)).trim());
+    }
+    return result;
+}
+
+/**
+ * Merge the authoritative cloud snapshot into the in-memory workbook. Local-only
+ * rows are preserved so a temporary network failure never destroys unfinished work.
+ */
+public static int mergeCloudSongs(MczTool parent, List<String> cloudColumns,
+                                  List<Map<String, String>> cloudRows) {
+    if (parent.currentWorkbook == null || parent.currentWorkbook.getNumberOfSheets() == 0
+            || cloudColumns == null || cloudRows == null) return readMaxIdFromExcel(parent);
+    Sheet sheet = parent.currentWorkbook.getSheetAt(0);
+    Row header = sheet.getRow(0);
+    if (header == null) header = sheet.createRow(0);
+    DataFormatter formatter = new DataFormatter();
+    LinkedHashMap<String, Integer> workbookColumns = new LinkedHashMap<>();
+    for (int column = 0; column < Math.max(0, header.getLastCellNum()); column++) {
+        String name = formatter.formatCellValue(header.getCell(column)).trim();
+        if (!name.isEmpty()) workbookColumns.put(name.toLowerCase(Locale.ROOT), column);
+    }
+    for (String cloudColumn : cloudColumns) {
+        String key = cloudColumn == null ? "" : cloudColumn.trim().toLowerCase(Locale.ROOT);
+        if (key.isEmpty() || workbookColumns.containsKey(key)) continue;
+        int column = Math.max(0, header.getLastCellNum());
+        header.createCell(column).setCellValue(cloudColumn);
+        workbookColumns.put(key, column);
+    }
+    Integer idColumn = workbookColumns.get("id");
+    if (idColumn == null) return readMaxIdFromExcel(parent);
+
+    // The cloud snapshot is authoritative. Song creation is cloud-first, so a
+    // row which disappeared from the snapshot is a confirmed deletion rather
+    // than an unsaved local draft. Remove it before rebuilding the ID index;
+    // otherwise a deleted highest ID remains in the embedded workbook and the
+    // duplicate guard incorrectly keeps that ID occupied forever.
+    Set<String> cloudIds = new HashSet<>();
+    for (Map<String, String> cloudRow : cloudRows) {
+        String id = valueIgnoreCase(cloudRow, "id").trim();
+        if (!id.isEmpty()) cloudIds.add(id);
+    }
+    for (int rowIndex = sheet.getLastRowNum(); rowIndex >= 1; rowIndex--) {
+        Row row = sheet.getRow(rowIndex);
+        if (row == null) continue;
+        String localId = formatter.formatCellValue(row.getCell(idColumn)).trim();
+        if (!localId.isEmpty() && !cloudIds.contains(localId)) sheet.removeRow(row);
+    }
+
+    LinkedHashMap<String, Row> byId = new LinkedHashMap<>();
+    int lastDataRow = 0;
+    for (int rowIndex = 1; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
+        Row row = sheet.getRow(rowIndex);
+        if (row == null) continue;
+        String id = formatter.formatCellValue(row.getCell(idColumn)).trim();
+        if (!id.isEmpty()) { byId.put(id, row); lastDataRow = Math.max(lastDataRow, rowIndex); }
+    }
+    for (Map<String, String> cloudRow : cloudRows) {
+        String id = valueIgnoreCase(cloudRow, "id").trim();
+        if (id.isEmpty()) continue;
+        Row row = byId.get(id);
+        if (row == null) {
+            row = sheet.createRow(++lastDataRow);
+            byId.put(id, row);
+        }
+        for (String cloudColumn : cloudColumns) {
+            Integer column = workbookColumns.get(cloudColumn.toLowerCase(Locale.ROOT));
+            if (column == null) continue;
+            Cell cell = row.getCell(column);
+            if (cell == null) cell = row.createCell(column);
+            cell.setCellValue(valueIgnoreCase(cloudRow, cloudColumn));
+        }
+    }
+    normalizeRowHeights(parent);
+    int max = readMaxIdFromExcel(parent);
+    parent.currentMaxId = max;
+    final int finalMax = max;
+    SwingUtilities.invokeLater(() -> {
+        if (parent.idHintLabel != null) parent.idHintLabel.setText(finalMax > 0
+                ? "最新ID: " + finalMax + "  →  新歌ID: " + (finalMax + 1)
+                : "云端曲库暂无数据");
+    });
+    return max;
+}
+
+private static String valueIgnoreCase(Map<String, String> row, String expected) {
+    for (Map.Entry<String, String> entry : row.entrySet())
+        if (entry.getKey().equalsIgnoreCase(expected)) return entry.getValue() == null ? "" : entry.getValue();
+    return "";
 }
 
 // 【新增】读取 Excel 最后一行的专辑编号（第 7 列）

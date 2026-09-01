@@ -30,14 +30,17 @@ async function admin(req, desktop = false) {
 function browserAllowed(req, cfg) {
   if (cfg.local) return true;
   const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(':')[0].toLowerCase();
-  const configuredHosts = String(process.env.BOT_EDITOR_ALLOWED_HOSTS || '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
-  const allowedHost = host === 'editor.teacharm.moe' || host === 'bot-editor.vercel.app' || configuredHosts.includes(host);
+  const fcRuntime = process.env.SONGBOT_RUNTIME === 'aliyun-fc';
+  const allowedHost = fcRuntime || host === 'editor.teacharm.moe' || host === 'bot-editor.vercel.app' || /^bot-editor-[a-z0-9-]+-licchas-projects\.vercel\.app$/.test(host);
   if (!allowedHost) return false;
   const origin = String(req.headers.origin || '').toLowerCase();
   if (!origin) return req.method === 'GET' || String(req.headers['sec-fetch-site'] || '') === 'same-origin';
   try {
     const originHost = new URL(origin).hostname.toLowerCase();
-    return originHost === host;
+    return fcRuntime
+      ? originHost === 'editor.teacharm.moe' || originHost === 'bot-editor.vercel.app'
+        || /^bot-editor-[a-z0-9-]+-licchas-projects\.vercel\.app$/.test(originHost)
+      : originHost === host;
   } catch (_) { return false; }
 }
 function sessionCookie(token) {
@@ -63,7 +66,28 @@ module.exports = async function handler(req, res) {
     }
 
     const desktop = security.desktopAuthorized(req);
-    if (!action.startsWith('bot-') && !desktop && !browserAllowed(req, cfg)) return json(res, 403, { error: 'origin not allowed' });
+    const workstationAdmin = action === 'workstation-admin-check' || action === 'workstation-admin-grant';
+    if (!action.startsWith('bot-') && !desktop && !workstationAdmin && !browserAllowed(req, cfg)) return json(res, 403, { error: 'origin not allowed' });
+
+    if (action === 'workstation-admin-check' && req.method === 'GET') {
+      const dev = device(req);
+      if (!dev) return json(res, 400, { error: 'device required' });
+      const fingerprint = security.ipFingerprint(req);
+      const allowed = await repo.deviceAllowed(dev)
+        || Boolean(fingerprint && await repo.trustedIpAllowed(fingerprint));
+      return json(res, 200, { admin: allowed });
+    }
+    if (action === 'workstation-admin-grant' && req.method === 'POST') {
+      const input = body(req); const dev = device(req, input);
+      if (!dev || !grantAttemptAllowed(req) || !/^[a-zA-Z]{6,40}$/.test(String(input.p || '')) || !security.passwordMatches(input.p)) {
+        return json(res, 200, { admin: false });
+      }
+      await emergency.assertWriteAllowed();
+      await repo.addDevice(dev, actor(req, dev, 'workstation'));
+      const fingerprint = security.ipFingerprint(req);
+      if (fingerprint) await repo.addTrustedIp(fingerprint, { kind: 'workstation', device: dev });
+      return json(res, 200, { admin: true });
+    }
 
     if (action === 'desktop-ip-check' && req.method === 'GET') {
       if (!desktop) return json(res, 401, { error: 'desktop authorization required' });
@@ -110,7 +134,7 @@ module.exports = async function handler(req, res) {
       if (req.method === 'POST') {
         await emergency.assertWriteAllowed();
         const result = await repo.create(body(req), auditActor, cfg.hiddenGroupId);
-        return json(res, 201, result.item, { ETag: `"${result.etag}"` });
+        return json(res, result.created === false ? 200 : 201, result.item, { ETag: `"${result.etag}"` });
       }
       if (req.method === 'PATCH' || req.method === 'PUT') {
         await emergency.assertWriteAllowed();
@@ -126,6 +150,9 @@ module.exports = async function handler(req, res) {
     if (action.startsWith('website-')) {
       const session = await admin(req, desktop); if (!session) return json(res, 401, { error: 'admin authorization required' });
       const auditActor = actor(req, session.sub || device(req), session.desktop ? 'mczmaker' : 'admin');
+      if (action === 'website-sync' && req.method === 'GET') {
+        return json(res, 200, await websitePosts.syncSnapshot(query(req, 'after')));
+      }
       if (action === 'website-list' && req.method === 'GET') return json(res, 200, await websitePosts.list());
       if (action === 'website-read' && req.method === 'GET') return json(res, 200, await websitePosts.read(String(query(req, 'name') || '')));
       if (action === 'website-save' && (req.method === 'POST' || req.method === 'PUT')) {

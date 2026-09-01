@@ -99,6 +99,7 @@ public final class MobileControlServer implements AutoCloseable {
         server.createContext("/api/action", this::action);
         server.createContext("/api/songs", this::songs);
         server.createContext("/api/song", this::song);
+        server.createContext("/api/song-delete", this::songDelete);
         server.createContext("/api/song-asset", this::songAsset);
         server.createContext("/api/stable", this::stable);
         server.createContext("/", this::staticFile);
@@ -245,6 +246,18 @@ public final class MobileControlServer implements AutoCloseable {
         } catch (Exception error) { respond(exchange, 400, jsonError(error.getMessage())); }
     }
 
+    private void songDelete(HttpExchange exchange) throws IOException {
+        if (!authorized(exchange)) { respond(exchange, 401, jsonError("请先配对")); return; }
+        if (!"POST".equals(exchange.getRequestMethod())) { respond(exchange, 405, jsonError("仅支持 POST")); return; }
+        try {
+            JSONObject input = bodyJson(exchange); String id = input.optString("id", "").trim();
+            if (id.isEmpty()) { respond(exchange, 400, jsonError("缺少歌曲 ID")); return; }
+            data.deleteSong(id);
+            log.info("手机端", "已删除歌曲 ID " + id + " 并释放编号");
+            respond(exchange, 200, new JSONObject().put("ok", true).toString());
+        } catch (Exception error) { respond(exchange, 400, jsonError(error.getMessage())); }
+    }
+
     private void stable(HttpExchange exchange) throws IOException {
         if (!authorized(exchange)) { respond(exchange, 401, jsonError("请先配对")); return; }
         try {
@@ -304,7 +317,7 @@ public final class MobileControlServer implements AutoCloseable {
         String path = payload.optString("path", "");
         String key = method + " " + path;
         Set<String> allowed = Set.of("GET /api/status", "GET /api/update", "GET /api/songs", "GET /api/stable",
-            "POST /api/song", "POST /api/stable", "POST /api/action", "POST /api/song-asset");
+            "POST /api/song", "POST /api/song-delete", "POST /api/stable", "POST /api/action", "POST /api/song-asset");
         if (!allowed.contains(key)) return new CloudMobileRelay.RelayResponse(400, new JSONObject().put("error", "未知操作"));
         JSONObject body = payload.optJSONObject("body"); if (body == null) body = new JSONObject();
         JSONObject query = payload.optJSONObject("query"); if (query == null) query = new JSONObject();
@@ -324,6 +337,12 @@ public final class MobileControlServer implements AutoCloseable {
                     String id = body.optString("id", "").trim();
                     if (id.isEmpty()) return relayResponse(400, new JSONObject().put("error", "缺少歌曲 ID"));
                     data.updateSong(id, body.optJSONObject("values") == null ? new JSONObject() : body.getJSONObject("values"));
+                    return relayResponse(200, new JSONObject().put("ok", true));
+                }
+                case "POST /api/song-delete": {
+                    String id = body.optString("id", "").trim();
+                    if (id.isEmpty()) return relayResponse(400, new JSONObject().put("error", "缺少歌曲 ID"));
+                    data.deleteSong(id);
                     return relayResponse(200, new JSONObject().put("ok", true));
                 }
                 case "POST /api/stable": {

@@ -17,7 +17,7 @@ final class AnnouncementPanel extends JPanel {
         setBackground(DesignTokens.PAPER);
         JTabbedPane tabs = new JTabbedPane();
         tabs.setFont(DesignTokens.BODY_MEDIUM);
-        tabs.addTab("公告与附件", new AnnouncementEditor(() -> { }));
+        tabs.addTab("公告与附件", new AnnouncementEditor(() -> { }, paths.songBot.toFile()));
         tabs.addTab("网站文章", new WebsiteContentPanel(paths, log, tasks, session));
         add(tabs, BorderLayout.CENTER);
     }

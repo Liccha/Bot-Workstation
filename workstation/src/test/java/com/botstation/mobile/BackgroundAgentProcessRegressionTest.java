@@ -40,6 +40,7 @@ public final class BackgroundAgentProcessRegressionTest {
         String java = Path.of(System.getProperty("java.home"), "bin", "java.exe").toString();
         Process process = new ProcessBuilder(java,
             "-Dfile.encoding=UTF-8",
+            "-Dbotstation.background.agent.lock=" + root.resolve("agent.lock"),
             "-Dbotstation.home=" + workstation,
             "-Dbotstation.songbot.home=" + songBot,
             "-cp", System.getProperty("java.class.path"),

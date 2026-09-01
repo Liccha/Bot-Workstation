@@ -17,7 +17,6 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Properties;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.concurrent.Executors;
@@ -71,25 +70,13 @@ public class SongBot {
         return SONG_BOT_HOME.resolve(relative).normalize().toFile();
     }
 
-    private static boolean dailyPushAutomationEnabled() {
-        File file = songBotFile("data/operations.properties");
-        if (!file.isFile()) return false;
-        Properties values = new Properties();
-        try (Reader reader = new InputStreamReader(new FileInputStream(file), StandardCharsets.UTF_8)) {
-            values.load(reader);
-            return Boolean.parseBoolean(values.getProperty("dailyPushAutomationEnabled", "false"));
-        } catch (IOException ignored) {
-            return false;
-        }
-    }
-
     /**
      * Pulls cloud library changes once during startup. Message handlers never
      * contact the cloud: they continue to query the local SQLite database.
      */
-    private static void syncMobileCloudToLocal() {
+    private static boolean syncMobileCloudToLocal() {
         Path workflow = songBotFile("tools/sync_mobile_cloud_to_local.py").toPath();
-        if (!java.nio.file.Files.isRegularFile(workflow)) return;
+        if (!java.nio.file.Files.isRegularFile(workflow)) return true;
 
         Process process = null;
         try {
@@ -114,22 +101,25 @@ public class SongBot {
             reader.setDaemon(true);
             reader.start();
 
-            if (!process.waitFor(120, TimeUnit.SECONDS)) {
+            if (!process.waitFor(600, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
-                System.err.println("Cloud library startup sync timed out; local data remains active.");
-                return;
+                System.err.println("⚠️ 云端曲库启动同步超时，本次继续使用本地数据且不会发布曲库。");
+                return false;
             }
             reader.join(1000);
             String message = output.toString(StandardCharsets.UTF_8).trim();
             if (process.exitValue() == 0) {
-                if (!message.isEmpty()) System.out.println("Cloud library: " + message);
+                if (!message.isEmpty()) System.out.println("☁️ " + message);
+                return true;
             } else {
-                System.err.println("Cloud library sync failed; local data remains active." +
+                System.err.println("⚠️ 云端曲库同步失败，本次继续使用本地数据且不会发布曲库。" +
                         (message.isEmpty() ? "" : " " + message));
+                return false;
             }
         } catch (Exception error) {
             if (process != null && process.isAlive()) process.destroyForcibly();
-            System.err.println("Cloud library sync could not start; local data remains active: " + error.getMessage());
+            System.err.println("⚠️ 无法启动云端曲库同步，本次继续使用本地数据且不会发布曲库: " + error.getMessage());
+            return false;
         }
     }
 
@@ -163,6 +153,23 @@ public class SongBot {
             2000000004L,
             2000000005L
     );
+    // 临时运营开关：关闭时仅暂停上述两个群的每日随机歌曲推送，
+    // 以及该流程附带的自动猜歌榜单发布/周期结算；模块和历史数据仍完整保留。
+    private static final boolean DAILY_PUSH_AUTOMATION_DEFAULT = false;
+
+    private static boolean dailyPushAutomationEnabled() {
+        File file = songBotFile("data/operations.properties");
+        if (!file.isFile()) return DAILY_PUSH_AUTOMATION_DEFAULT;
+        java.util.Properties values = new java.util.Properties();
+        try (java.io.Reader reader = java.nio.file.Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8)) {
+            values.load(reader);
+            return Boolean.parseBoolean(values.getProperty("dailyPushAutomationEnabled", "false"));
+        } catch (Exception error) {
+            System.err.println("[运营开关] 读取失败，按关闭处理: " + error.getMessage());
+            return false;
+        }
+    }
+
     // 定时任务调度器
     private static final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
     private static final Map<Integer, Long> SONG_UNLOCK_TIME_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
@@ -464,10 +471,11 @@ public class SongBot {
 
         // 2. 启动时低频同步云端曲库，再导入本地数据库；群消息查询不访问云端。
         System.out.println("🔄 正在自动导入最新曲库...");
-        syncMobileCloudToLocal();
+        boolean mobileCloudReady = syncMobileCloudToLocal();
         dbService.importCsv(songBotFile("songs.csv").getAbsolutePath());
         // 后台自动同步曲库到 GitHub
-        new Thread(() -> syncSongLibrary()).start();
+        if (mobileCloudReady) new Thread(() -> syncSongLibrary()).start();
+        else System.err.println("[曲库] 已阻止使用旧本地数据覆盖云端媒体完整版本。");
         dbService.importDailySchedule(songBotFile("daily_songs.csv").getAbsolutePath());
 
         loadGameSnapshot();
@@ -477,9 +485,8 @@ public class SongBot {
         stableService.startScheduler();
         // 3. 启动每日推送 + 公告定时调度
         startDailyScheduler();
-        if (!dailyPushAutomationEnabled()) {
+        if (!dailyPushAutomationEnabled())
             System.out.println("⏸️ 两群每日随机歌曲推送与自动猜歌榜单结算已暂停；模块和历史数据均保留。");
-        }
         startAnnounceScheduler();
         server.createContext("/", exchange -> {
             String response = "<h1>Bot is Alive</h1>";
@@ -617,16 +624,15 @@ public class SongBot {
             if ("OPTIONS".equals(exchange.getRequestMethod())) { sendResponse(exchange, 204, ""); return; }
             try {
                 org.json.JSONArray arr = new org.json.JSONArray();
-                java.io.File[] fontDirs = configuredFontDirectories();
-                for (java.io.File dir : fontDirs) {
-                    if (!dir.exists()) continue;
-                    java.io.File[] files = dir.listFiles((d, n) -> n.endsWith(".ttf") || n.endsWith(".otf"));
-                    if (files != null) for (java.io.File f : files) {
-                        org.json.JSONObject o = new org.json.JSONObject();
-                        o.put("name", f.getName().replaceAll("\\.(ttf|otf)$", ""));
-                        o.put("file", f.getName());
-                        arr.put(o);
-                    }
+                String[] bundledFonts = {"演示斜黑体.otf", "思源宋体Bold.otf", "方正粗圆简体.ttf", "仓耳玄三M.ttf", "opposans.ttf"};
+                for (String file : bundledFonts) arr.put(new org.json.JSONObject()
+                    .put("name", file.replaceAll("\\.(ttf|otf)$", "")).put("file", file));
+                java.io.File userFontDir = songBotFile("fonts");
+                java.io.File[] userFonts = userFontDir.listFiles((d, n) -> n.endsWith(".ttf") || n.endsWith(".otf"));
+                if (userFonts != null) for (java.io.File font : userFonts) {
+                    boolean duplicate = java.util.Arrays.asList(bundledFonts).contains(font.getName());
+                    if (!duplicate) arr.put(new org.json.JSONObject()
+                        .put("name", font.getName().replaceAll("\\.(ttf|otf)$", "")).put("file", font.getName()));
                 }
                 sendResponse(exchange, 200, arr.toString());
             } catch (Exception e) { sendResponse(exchange, 500, "[]"); }
@@ -640,14 +646,21 @@ public class SongBot {
                 if (name == null || !name.matches("^[a-zA-Z0-9._-]+\\\\.(ttf|otf)$")) {
                     sendResponse(exchange, 400, "bad name"); return;
                 }
-                java.io.File[] searchDirs = configuredFontDirectories();
-                java.io.File found = null;
-                for (java.io.File dir : searchDirs) {
-                    java.io.File f = new java.io.File(dir, name);
-                    if (f.exists()) { found = f; break; }
+                java.util.Map<String, String> bundledFonts = new java.util.LinkedHashMap<>();
+                bundledFonts.put("演示斜黑体.otf", "/素材/5首歌模板/演示斜黑体.otf");
+                bundledFonts.put("思源宋体Bold.otf", "/素材/5首歌模板/思源宋体Bold.otf");
+                bundledFonts.put("方正粗圆简体.ttf", "/素材/5首歌模板/方正粗圆简体.ttf");
+                bundledFonts.put("仓耳玄三M.ttf", "/素材/日历/仓耳玄三M.ttf");
+                bundledFonts.put("opposans.ttf", "/素材/日历/opposans.ttf");
+                byte[] fontBytes = null;
+                java.io.File userFont = new java.io.File(songBotFile("fonts"), name);
+                if (userFont.isFile()) fontBytes = java.nio.file.Files.readAllBytes(userFont.toPath());
+                if (fontBytes == null && bundledFonts.containsKey(name)) {
+                    try (java.io.InputStream input = SongBot.class.getResourceAsStream(bundledFonts.get(name))) {
+                        if (input != null) fontBytes = input.readAllBytes();
+                    }
                 }
-                if (found == null) { sendResponse(exchange, 404, ""); return; }
-                byte[] fontBytes = java.nio.file.Files.readAllBytes(found.toPath());
+                if (fontBytes == null) { sendResponse(exchange, 404, ""); return; }
                 String ct = name.endsWith(".ttf") ? "font/ttf" : "font/otf";
                 exchange.getResponseHeaders().set("Content-Type", ct);
                 exchange.getResponseHeaders().set("Cache-Control", "max-age=86400");
@@ -3092,26 +3105,13 @@ public class SongBot {
         return resolveChildFile(base, token);
     }
 
-    private static java.io.File[] configuredFontDirectories() {
-        String configured = System.getenv("MCZ_ASSET_DIR");
-        java.io.File root = configured == null || configured.isBlank()
-                ? new java.io.File(System.getProperty("user.home"), "BotWorkstation/assets")
-                : new java.io.File(configured);
-        return new java.io.File[] {
-                new java.io.File(root, "5首歌模板"),
-                new java.io.File(root, "日历")
-        };
-    }
-
     private static void addCors(HttpExchange exchange) {
         String origin = exchange.getRequestHeaders().getFirst("Origin");
-        String configured = System.getenv("BOT_EDITOR_ALLOWED_ORIGINS");
-        boolean configuredOrigin = origin != null && configured != null
-                && java.util.Arrays.stream(configured.split(","))
-                    .map(String::trim).anyMatch(origin::equals);
-        if (origin != null && (origin.equals("https://bot-editor.vercel.app")
+        if (origin != null && (origin.equals("https://liccha.tailae715d.ts.net")
+                || origin.equals("https://bot-editor.vercel.app")
                 || origin.equals("https://editor.teacharm.moe")
-                || configuredOrigin
+                || origin.matches("https://bot-editor-[a-z0-9-]+-licchas-projects\\.vercel\\.app")
+                || origin.equals("https://liccha.github.io")
                 || origin.matches("https?://(localhost|127\\.0\\.0\\.1)(:\\d+)?"))) {
             exchange.getResponseHeaders().add("Access-Control-Allow-Origin", origin);
             exchange.getResponseHeaders().add("Vary", "Origin");

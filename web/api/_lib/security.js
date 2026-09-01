@@ -71,7 +71,7 @@ function clientIp(req) {
     || req.headers['x-real-ip'] || req.socket?.remoteAddress || '');
 }
 function trustedEdgeIp(req) {
-  return normalizeIp(req.headers['x-vercel-forwarded-for']);
+  return normalizeIp(req.headers['x-fc-source-ip'] || req.headers['x-vercel-forwarded-for']);
 }
 function ipFingerprint(req) {
   // Never fall back to caller-controlled forwarding headers for a value that

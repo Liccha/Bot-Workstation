@@ -28,11 +28,26 @@ public final class StableQuerySendRegressionTest {
         });
         server.start();
         System.setProperty("napcat.api.url", "http://127.0.0.1:" + server.getAddress().getPort());
-        Path database = Files.createTempFile("stable-query-send-", ".db");
+        Path fixtureRoot = Files.createTempDirectory("stable-query-send-");
+        Path coverDirectory = Files.createDirectories(fixtureRoot.resolve("stable_cover"));
+        Path expectedCover = coverDirectory.resolve("12518.webp");
+        Files.write(expectedCover, new byte[]{1, 2, 3});
+        Path database = fixtureRoot.resolve("stable.db");
         try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
              Statement statement = connection.createStatement()) {
             statement.execute("CREATE TABLE stable_info (sid TEXT PRIMARY KEY,title TEXT,artist TEXT,bpm TEXT,length TEXT,creator TEXT,update_time TEXT,cover TEXT)");
-            statement.execute("INSERT INTO stable_info VALUES ('12518','Crazy Jackpot','Hommarju','170','114','AnChenOwO','2025/3/18 21:01','')");
+            String brokenSpreadsheetCover = "\"" + coverDirectory + "\\\"&A2&\".webp\"";
+            try (var insert = connection.prepareStatement("INSERT INTO stable_info VALUES (?,?,?,?,?,?,?,?)")) {
+                insert.setString(1, "12518");
+                insert.setString(2, "Crazy Jackpot");
+                insert.setString(3, "Hommarju");
+                insert.setString(4, "170");
+                insert.setString(5, "114");
+                insert.setString(6, "AnChenOwO");
+                insert.setString(7, "2025/3/18 21:01");
+                insert.setString(8, brokenSpreadsheetCover);
+                insert.executeUpdate();
+            }
             Stable stable = new Stable(connection, new NapCatClient());
             stable.handleGroupMessage(2000000006L, 42L, "！s12518");
             JSONObject sent = payload.get();
@@ -41,10 +56,15 @@ public final class StableQuerySendRegressionTest {
             String message = sent.optString("message", "");
             require(message.contains("Crazy Jackpot") && message.contains("sid:12518"),
                 "Stable response lost song data");
+            require(message.endsWith("[CQ:image,file=base64://AQID]"),
+                "Stable response must place its self-contained cover after all text");
         } finally {
             server.stop(0);
             System.clearProperty("napcat.api.url");
             Files.deleteIfExists(database);
+            Files.deleteIfExists(expectedCover);
+            Files.deleteIfExists(coverDirectory);
+            Files.deleteIfExists(fixtureRoot);
         }
         System.out.println("STABLE_QUERY_SEND_GREEN");
     }

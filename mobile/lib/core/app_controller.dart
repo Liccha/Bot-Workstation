@@ -20,7 +20,8 @@ class AppController extends ChangeNotifier {
   final MobileUpdateService mobileUpdates;
 
   bool get connected => api != null;
-  bool get cloudIndependent => api != null && Uri.parse(api!.server).path == '/api/mobile-data';
+  bool get cloudIndependent =>
+      api != null && Uri.parse(api!.server).path == '/api/mobile-data';
 
   Future<void> restore() async {
     checkMobileUpdate();
@@ -31,9 +32,13 @@ class AppController extends ChangeNotifier {
         final independentServer = saved?.path == '/api/mobile-relay'
             ? saved!.replace(path: '/api/mobile-data', query: null).toString()
             : session.server;
-        api = WorkstationApi(independentServer, token: session.token);
-        if (independentServer != session.server) {
-          await _store.save(independentServer, session.token);
+        final restored = WorkstationApi(
+          independentServer,
+          token: session.token,
+        );
+        api = restored;
+        if (restored.server != session.server) {
+          await _store.save(restored.server, session.token);
         }
         // A paired device account is durable. A slow or offline workstation must
         // not discard it or send the user back to the pairing screen.
@@ -104,18 +109,22 @@ class AppController extends ChangeNotifier {
     final current = api;
     if (current == null) return;
     if (cloudIndependent) {
-      final liveStatus = await current.serviceStatus().then<Map<String, dynamic>>(
-        (value) => value,
-        onError: (_) => <String, dynamic>{
-          'workstationOnline': status['workstationOnline'],
-          'songBot': status['songBot'] ?? 'unknown',
-          'napCat': status['napCat'] ?? 'unknown',
-          'dailyAutomation': status['dailyAutomation'] ?? false,
-        },
-      );
+      final liveStatus = await current
+          .serviceStatus()
+          .then<Map<String, dynamic>>(
+            (value) => value,
+            onError: (_) => <String, dynamic>{
+              'workstationOnline': status['workstationOnline'],
+              'songBot': status['songBot'] ?? 'unknown',
+              'napCat': status['napCat'] ?? 'unknown',
+              'dailyAutomation': status['dailyAutomation'] ?? false,
+            },
+          );
       if (api != current) return;
       status = {...status, ...liveStatus};
       notifyListeners();
+      // Library totals come from a separate cloud snapshot and must never hold
+      // up the lightweight online check or the pull-to-refresh animation.
       unawaited(_refreshCloudSnapshot(current));
       return;
     }
@@ -134,7 +143,11 @@ class AppController extends ChangeNotifier {
       if (api != current) return;
       final live = <String, dynamic>{
         for (final key in const [
-          'workstationOnline', 'songBot', 'napCat', 'dailyAutomation', 'updatedAt',
+          'workstationOnline',
+          'songBot',
+          'napCat',
+          'dailyAutomation',
+          'updatedAt',
         ])
           if (status.containsKey(key)) key: status[key],
       };

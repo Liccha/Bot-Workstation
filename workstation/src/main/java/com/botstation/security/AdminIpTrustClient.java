@@ -1,5 +1,6 @@
 package com.botstation.security;
 
+import com.botstation.core.CloudEndpoints;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
@@ -18,7 +19,7 @@ import java.util.Locale;
 import java.util.Properties;
 
 /**
- * Uses the existing desktop service token to ask the cloud whether Vercel's
+ * Uses the existing desktop service token to ask the cloud whether the
  * observed client IP is trusted. The client never sends an IP or password.
  */
 final class AdminIpTrustClient {
@@ -39,22 +40,29 @@ final class AdminIpTrustClient {
 
     static AdminIpTrustClient fromSongBot(Path songBotDirectory) throws IOException {
         Path file = songBotDirectory.resolve("data").resolve("cloud-announcement.properties");
-        if (!Files.isRegularFile(file)) throw new IOException("未找到云公告配置");
-        Properties properties = new Properties();
-        try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-            properties.load(reader);
+        URI endpoint = CloudEndpoints.ANNOUNCEMENT;
+        String token = "";
+        if (Files.isRegularFile(file)) {
+            try {
+                Properties properties = new Properties();
+                try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+                    properties.load(reader);
+                }
+                if ("cloud".equalsIgnoreCase(properties.getProperty("backend", "").trim())) {
+                    String configuredApi = properties.getProperty("api", "").trim();
+                    if (!configuredApi.isEmpty()) endpoint = validateEndpoint(CloudEndpoints.migrateLegacy(URI.create(configuredApi)));
+                    token = properties.getProperty("desktopToken", "").trim();
+                }
+            } catch (Exception ignored) {
+                endpoint = CloudEndpoints.ANNOUNCEMENT;
+                token = "";
+            }
         }
-        if (!"cloud".equalsIgnoreCase(properties.getProperty("backend", "").trim())) {
-            throw new IOException("云公告模式尚未启用");
-        }
-        String api = properties.getProperty("api", "").trim();
-        String token = properties.getProperty("desktopToken", "").trim();
-        if (api.isEmpty() || token.isEmpty()) throw new IOException("云公告地址或桌面令牌缺失");
         String host;
         try { host = InetAddress.getLocalHost().getHostName(); }
         catch (Exception ignored) { host = "desktop"; }
         String device = "bot-workstation-" + host.replaceAll("[^A-Za-z0-9_.-]", "_");
-        return new AdminIpTrustClient(URI.create(api), token, device, 5000, 12000);
+        return new AdminIpTrustClient(endpoint, token, device, 5000, 12000);
     }
 
     static AdminIpTrustClient forTest(URI api, String token) {
@@ -62,16 +70,29 @@ final class AdminIpTrustClient {
     }
 
     boolean isTrusted() throws IOException {
-        return request("GET", "desktop-ip-check").optBoolean("trusted", false);
+        if (token.isEmpty()) return request("GET", "workstation-admin-check", null).optBoolean("admin", false);
+        return request("GET", "desktop-ip-check", null).optBoolean("trusted", false);
     }
 
     void grant() throws IOException {
-        if (!request("POST", "desktop-ip-grant").optBoolean("trusted", false)) {
+        if (!request("POST", "desktop-ip-grant", new JSONObject()).optBoolean("trusted", false)) {
             throw new IOException("云端没有确认可信 IP");
         }
     }
 
-    private JSONObject request(String method, String action) throws IOException {
+    boolean grantWithPassword(char[] password) throws IOException {
+        if (password == null || password.length < 6 || password.length > 40) return false;
+        for (char value : password) if ((value < 'A' || value > 'Z') && (value < 'a' || value > 'z')) return false;
+        JSONObject input = new JSONObject();
+        input.put("d", device);
+        input.put("p", new String(password));
+        String action = token.isEmpty() ? "workstation-admin-grant" : "admin-grant";
+        boolean accepted = request("POST", action, input).optBoolean("admin", false);
+        if (accepted && !token.isEmpty()) grant();
+        return accepted;
+    }
+
+    private JSONObject request(String method, String action, JSONObject input) throws IOException {
         URL endpoint = URI.create(api.toString() + (api.getRawQuery() == null ? "?" : "&") + "action=" + action).toURL();
         HttpURLConnection connection = (HttpURLConnection) endpoint.openConnection();
         connection.setInstanceFollowRedirects(false);
@@ -79,10 +100,10 @@ final class AdminIpTrustClient {
         connection.setReadTimeout(readTimeoutMs);
         connection.setRequestMethod(method);
         connection.setRequestProperty("Accept", "application/json");
-        connection.setRequestProperty("Authorization", "Desktop " + token);
+        if (!token.isEmpty()) connection.setRequestProperty("Authorization", "Desktop " + token);
         connection.setRequestProperty("X-Admin-Device", device);
         if ("POST".equals(method)) {
-            byte[] payload = "{}".getBytes(StandardCharsets.UTF_8);
+            byte[] payload = (input == null ? "{}" : input.toString()).getBytes(StandardCharsets.UTF_8);
             connection.setDoOutput(true);
             connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
             connection.setFixedLengthStreamingMode(payload.length);
@@ -117,7 +138,7 @@ final class AdminIpTrustClient {
         String scheme = String.valueOf(endpoint.getScheme()).toLowerCase(Locale.ROOT);
         String host = endpoint.getHost().toLowerCase(Locale.ROOT);
         boolean loopback = "127.0.0.1".equals(host) || "localhost".equals(host) || "::1".equals(host);
-        boolean productionHost = "editor.teacharm.moe".equals(host) || "bot-editor.vercel.app".equals(host);
+        boolean productionHost = CloudEndpoints.isProductionHost(host);
         if (!("https".equals(scheme) && productionHost) && !("http".equals(scheme) && loopback)) {
             throw new IllegalArgumentException("云公告地址必须使用受信任的 HTTPS 域名");
         }

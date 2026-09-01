@@ -1,6 +1,7 @@
 package com.botstation.features;
 
 import com.botstation.core.BotPaths;
+import com.botstation.core.LogBus;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -18,8 +19,13 @@ public final class MobileDataService {
         "song_nickname5", "song_nickname6", "artist_nickname");
     private final SongLibraryRepository songs;
     private final StableRepository stable;
+    private final SongAssetService songAssets;
 
-    public MobileDataService(BotPaths paths) { songs = new SongLibraryRepository(paths.songDatabase); stable = new StableRepository(paths); }
+    public MobileDataService(BotPaths paths) {
+        songs = new SongLibraryRepository(paths.songDatabase);
+        stable = new StableRepository(paths);
+        songAssets = new SongAssetService(paths, new LogBus(paths.logs()), songs);
+    }
 
     public JSONObject songs(String query, int requestedLimit) throws Exception {
         return songs(query, 0, requestedLimit);
@@ -56,6 +62,22 @@ public final class MobileDataService {
             if (actual != null && !actual.equalsIgnoreCase(idColumn)) values.put(actual, inputValues.optString(key, ""));
         }
         songs.update(idColumn, id, values);
+    }
+
+    public void createSong(String id, JSONObject inputValues) throws Exception {
+        SongLibraryRepository.Snapshot snapshot = songs.load();
+        String idColumn = snapshot.columns.stream().filter(column -> column.equalsIgnoreCase("id")).findFirst()
+            .orElseThrow(() -> new IllegalStateException("歌曲表没有 id 字段"));
+        Map<String, String> values = new LinkedHashMap<>();
+        for (String key : inputValues.keySet()) {
+            String actual = snapshot.columns.stream().filter(column -> column.equalsIgnoreCase(key)).findFirst().orElse(null);
+            if (actual != null && !actual.equalsIgnoreCase(idColumn)) values.put(actual, inputValues.optString(key, ""));
+        }
+        songs.create(idColumn, id, values);
+    }
+
+    public void deleteSong(String id) throws Exception {
+        songAssets.deleteSong(id);
     }
 
     private static List<String> orderedSongColumns(List<String> actualColumns) {

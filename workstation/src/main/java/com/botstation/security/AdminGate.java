@@ -2,6 +2,7 @@ package com.botstation.security;
 
 import com.botstation.core.BotPaths;
 import com.botstation.core.LogBus;
+import com.botstation.core.TaskRunner;
 
 import javax.swing.BorderFactory;
 import javax.swing.JLabel;
@@ -17,12 +18,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.Arrays;
+import java.util.function.Consumer;
 
 /** Password gate with cloud-side trusted-IP continuity. It never uploads the password or raw IP. */
 public final class AdminGate {
     private final Path passwordFile;
     private final LogBus log;
     private final AdminIpTrustClient ipTrust;
+    private final AdminPrompt prompt;
     private AdminSession session;
 
     public AdminGate(BotPaths paths, LogBus log) {
@@ -32,6 +35,14 @@ public final class AdminGate {
         try { configured = AdminIpTrustClient.fromSongBot(paths.songBot); }
         catch (Exception error) { log.warn("管理员验证", "可信 IP 客户端未启用：" + error.getMessage()); }
         this.ipTrust = configured;
+        this.prompt = new SwingAdminPrompt();
+    }
+
+    AdminGate(Path passwordFile, LogBus log, AdminIpTrustClient ipTrust, AdminPrompt prompt) {
+        this.passwordFile = passwordFile;
+        this.log = log;
+        this.ipTrust = ipTrust;
+        this.prompt = prompt;
     }
 
     public synchronized boolean authorize(Component parent) {
@@ -44,57 +55,132 @@ public final class AdminGate {
                     return true;
                 }
             } catch (Exception error) {
-                log.warn("管理员验证", "可信 IP 检查暂不可用，改用本机密码：" + error.getMessage());
+                log.warn("管理员验证", "可信身份检查暂不可用，改用云端密码验证：" + error.getMessage());
             }
         }
+        return ipTrust == null ? authorizeWithLocalPassword(parent) : authorizeWithCloudPassword(parent);
+    }
+
+    /**
+     * Performs the cloud trust lookup away from Swing's event thread.  Password
+     * dialogs and the completion callback always run on the caller/EDT side.
+     */
+    public void authorizeAsync(Component parent, TaskRunner tasks, Consumer<Boolean> completion) {
+        synchronized (this) {
+            if (session != null && session.isAuthorized()) {
+                completion.accept(true);
+                return;
+            }
+        }
+        if (ipTrust == null) {
+            completion.accept(authorizeWithLocalPassword(parent));
+            return;
+        }
+        tasks.run(ipTrust::isTrusted, trusted -> {
+            if (trusted) {
+                synchronized (AdminGate.this) { session = new AdminSession(AdminGate.this); }
+                log.info("管理员验证", "当前公网 IP 已受信任，公告及网站管理已直接解锁");
+                completion.accept(true);
+            } else {
+                authorizeWithCloudPasswordAsync(parent, tasks, completion);
+            }
+        }, error -> {
+            log.warn("管理员验证", "可信身份检查暂不可用，尝试云端密码验证：" + error.getMessage());
+            authorizeWithCloudPasswordAsync(parent, tasks, completion);
+        });
+    }
+
+    /** Warms the trusted-IP session once at startup so a later page click is immediate. */
+    public void prewarm(TaskRunner tasks) {
+        synchronized (this) {
+            if (ipTrust == null || (session != null && session.isAuthorized())) return;
+        }
+        tasks.run(ipTrust::isTrusted, trusted -> {
+            if (!trusted) return;
+            synchronized (AdminGate.this) {
+                if (session == null) session = new AdminSession(AdminGate.this);
+            }
+            log.info("管理员验证", "可信 IP 已预验证，公告及网站管理可直接打开");
+        }, error -> log.warn("管理员验证", "后台预验证暂不可用：" + error.getMessage()));
+    }
+
+    private boolean authorizeWithCloudPassword(Component parent) {
+        char[] provided = prompt.requestPassword(parent);
+        if (provided == null) return false;
+        try {
+            boolean accepted = ipTrust.grantWithPassword(provided);
+            if (!accepted) {
+                log.warn("管理员验证", "密码不匹配；未封禁、未进入公告页面");
+                prompt.warning(parent, "验证失败", "密码不正确，公告管理仍处于锁定状态。");
+                return false;
+            }
+            session = new AdminSession(this);
+            log.info("管理员验证", "云端验证通过；当前设备已加入管理员可信列表");
+            return true;
+        } catch (Exception error) {
+            log.error("管理员验证", "云端验证失败：" + error.getMessage());
+            prompt.error(parent, "管理员服务不可用", "暂时无法完成管理员验证，请稍后重试。");
+            return false;
+        } finally {
+            Arrays.fill(provided, '\0');
+        }
+    }
+
+    private void authorizeWithCloudPasswordAsync(Component parent, TaskRunner tasks, Consumer<Boolean> completion) {
+        char[] provided = prompt.requestPassword(parent);
+        if (provided == null) {
+            completion.accept(false);
+            return;
+        }
+        tasks.run(() -> {
+            try { return ipTrust.grantWithPassword(provided); }
+            finally { Arrays.fill(provided, '\0'); }
+        }, accepted -> {
+            if (!accepted) {
+                log.warn("管理员验证", "密码不匹配；未封禁、未进入公告页面");
+                prompt.warning(parent, "验证失败", "密码不正确，公告管理仍处于锁定状态。");
+                completion.accept(false);
+                return;
+            }
+            synchronized (AdminGate.this) { session = new AdminSession(AdminGate.this); }
+            log.info("管理员验证", "云端验证通过；当前设备已加入管理员可信列表");
+            completion.accept(true);
+        }, error -> {
+            Arrays.fill(provided, '\0');
+            log.error("管理员验证", "云端验证失败：" + error.getMessage());
+            prompt.error(parent, "管理员服务不可用", "暂时无法完成管理员验证，请稍后重试。");
+            completion.accept(false);
+        });
+    }
+
+    private boolean authorizeWithLocalPassword(Component parent) {
         if (!Files.isRegularFile(passwordFile)) {
-            JOptionPane.showMessageDialog(parent, "管理员密码文件缺失，公告管理保持锁定。\n" + passwordFile,
-                "管理员验证不可用", JOptionPane.ERROR_MESSAGE);
+            prompt.error(parent, "管理员验证不可用",
+                "管理员密码文件缺失，公告管理保持锁定。\n" + passwordFile);
             log.error("管理员验证", "密码文件缺失");
             return false;
         }
-        JPasswordField field = new JPasswordField(24);
-        field.putClientProperty("JTextField.placeholderText", "输入管理员密码");
-        JPanel form = new JPanel(new GridLayout(0, 1, 0, 7));
-        form.setBorder(BorderFactory.createEmptyBorder(5, 4, 2, 4));
-        form.add(new JLabel("公告、附件与网站内容属于管理员区域。"));
-        form.add(field);
-        int result = JOptionPane.showConfirmDialog(parent, form, "验证管理员身份",
-            JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-        if (result != JOptionPane.OK_OPTION) { clear(field); return false; }
-        char[] providedChars = field.getPassword();
+        char[] providedChars = prompt.requestPassword(parent);
+        if (providedChars == null) return false;
         byte[] provided = utf8(providedChars);
         Arrays.fill(providedChars, '\0');
-        clear(field);
         try {
             byte[] expected = readPasswordBytes(passwordFile);
             boolean okay = expected.length > 0 && MessageDigest.isEqual(expected, provided);
             Arrays.fill(expected, (byte) 0);
             Arrays.fill(provided, (byte) 0);
             if (okay) {
-                session = new AdminSession(this);
-                if (ipTrust != null) {
-                    try {
-                        ipTrust.grant();
-                        log.info("管理员验证", "密码正确；当前公网 IP 已永久加入云端可信列表");
-                    } catch (Exception error) {
-                        log.warn("管理员验证", "本次会话已解锁，但可信 IP 保存失败：" + error.getMessage());
-                        JOptionPane.showMessageDialog(parent,
-                            "本次会话已解锁，但当前 IP 没有保存到云端。\n下次启动可能仍需输入密码。",
-                            "可信 IP 未保存", JOptionPane.WARNING_MESSAGE);
-                    }
-                } else {
-                    log.info("管理员验证", "本次工作台会话已解锁；可信 IP 服务未配置");
-                }
+                synchronized (this) { session = new AdminSession(this); }
+                log.info("管理员验证", "本次工作台会话已通过本机兼容密码解锁");
                 return true;
             }
             log.warn("管理员验证", "密码不匹配；未封禁、未进入公告页面");
-            JOptionPane.showMessageDialog(parent, "密码不正确，公告管理仍处于锁定状态。", "验证失败", JOptionPane.WARNING_MESSAGE);
+            prompt.warning(parent, "验证失败", "密码不正确，公告管理仍处于锁定状态。");
             return false;
         } catch (Exception error) {
             Arrays.fill(provided, (byte) 0);
             log.error("管理员验证", "读取失败：" + error.getMessage());
-            JOptionPane.showMessageDialog(parent, "无法完成管理员验证：\n" + error.getMessage(), "验证失败", JOptionPane.ERROR_MESSAGE);
+            prompt.error(parent, "验证失败", "无法完成管理员验证：\n" + error.getMessage());
             return false;
         }
     }
@@ -154,5 +240,40 @@ public final class AdminGate {
         }
     }
 
-    private static void clear(JPasswordField field) { field.setText(""); }
+    interface AdminPrompt {
+        char[] requestPassword(Component parent);
+        void warning(Component parent, String title, String message);
+        void error(Component parent, String title, String message);
+    }
+
+    private static final class SwingAdminPrompt implements AdminPrompt {
+        @Override
+        public char[] requestPassword(Component parent) {
+            JPasswordField field = new JPasswordField(24);
+            field.putClientProperty("JTextField.placeholderText", "输入管理员密码");
+            JPanel form = new JPanel(new GridLayout(0, 1, 0, 7));
+            form.setBorder(BorderFactory.createEmptyBorder(5, 4, 2, 4));
+            form.add(new JLabel("公告、附件与网站内容属于管理员区域。"));
+            form.add(field);
+            int result = JOptionPane.showConfirmDialog(parent, form, "验证管理员身份",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+            if (result != JOptionPane.OK_OPTION) {
+                field.setText("");
+                return null;
+            }
+            char[] password = field.getPassword();
+            field.setText("");
+            return password;
+        }
+
+        @Override
+        public void warning(Component parent, String title, String message) {
+            JOptionPane.showMessageDialog(parent, message, title, JOptionPane.WARNING_MESSAGE);
+        }
+
+        @Override
+        public void error(Component parent, String title, String message) {
+            JOptionPane.showMessageDialog(parent, message, title, JOptionPane.ERROR_MESSAGE);
+        }
+    }
 }

@@ -7,6 +7,7 @@ import com.botstation.core.TaskRunner;
 import com.botstation.core.UpdateService;
 import com.botstation.features.SongLibraryPanel;
 import com.botstation.features.StableWorkbookPanel;
+import com.botstation.features.MczCloudSongService;
 import com.botstation.mobile.MobileControlServer;
 import com.botstation.mobile.BackgroundAgent;
 import com.botstation.security.AdminGate;
@@ -58,6 +59,7 @@ public final class WorkbenchFrame extends JFrame {
     private String current = "overview";
     private boolean compact;
     private boolean resourcesClosed;
+    private boolean adminAuthorizationPending;
 
     public WorkbenchFrame(BotPaths paths, LogBus log, TaskRunner tasks, ProcessSupervisor services) {
         super("Bot 工作站");
@@ -86,7 +88,11 @@ public final class WorkbenchFrame extends JFrame {
         });
         addWindowListener(new WindowAdapter() {
             @Override public void windowOpened(WindowEvent event) {
-                ensureMczWorkspace();
+                // MczMaker is intentionally lazy: constructing its image/audio/design
+                // editors during startup used to monopolize AWT and trigger false
+                // "UI frozen" reports. Only the lightweight cloud revision check runs now.
+                refreshCloudLibraryCache();
+                adminGate.prewarm(tasks);
                 startMobileCompanion();
                 checkForUpdates();
             }
@@ -102,6 +108,24 @@ public final class WorkbenchFrame extends JFrame {
             }
         });
         log.info("工作站", "控制中心已启动；关闭工作站不会停止机器人服务");
+    }
+
+    private void refreshCloudLibraryCache() {
+        tasks.execute(() -> {
+            try {
+                MczCloudSongService.Snapshot snapshot = new MczCloudSongService(paths).loadLatest();
+                int max = 0;
+                for (java.util.Map<String, String> row : snapshot.rows) {
+                    String id = "";
+                    for (java.util.Map.Entry<String, String> entry : row.entrySet())
+                        if (entry.getKey().equalsIgnoreCase("id")) { id = entry.getValue(); break; }
+                    try { max = Math.max(max, Integer.parseInt(id.trim())); } catch (Exception ignored) { }
+                }
+                log.info("云端曲库", "启动检查完成，最大 ID " + max);
+            } catch (Exception error) {
+                log.warn("云端曲库", "启动检查暂不可用：" + String.valueOf(error.getMessage()));
+            }
+        });
     }
 
     private void startMobileCompanion() {
@@ -205,7 +229,17 @@ public final class WorkbenchFrame extends JFrame {
     private void showPage(String key) {
         Page page = pages.get(key);
         if (page == null) return;
-        if (page.adminProtected && !adminGate.authorize(this)) return;
+        if (page.adminProtected && !adminGate.isAuthorized()) {
+            if (adminAuthorizationPending) return;
+            adminAuthorizationPending = true;
+            setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.WAIT_CURSOR));
+            adminGate.authorizeAsync(this, tasks, authorized -> {
+                adminAuthorizationPending = false;
+                setCursor(java.awt.Cursor.getDefaultCursor());
+                if (authorized) showPage(key);
+            });
+            return;
+        }
         if (page.component == null) {
             page.view = page.supplier.get();
             page.component = PageTransition.wrap(page.view);

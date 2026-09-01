@@ -19,7 +19,8 @@ public final class OperationsSettings {
     }
 
     public synchronized boolean dailyAutomationEnabled() {
-        return Boolean.parseBoolean(load().getProperty(DAILY_AUTOMATION, "false"));
+        Properties values = load();
+        return Boolean.parseBoolean(values.getProperty(DAILY_AUTOMATION, "false"));
     }
 
     public synchronized void setDailyAutomationEnabled(boolean enabled) throws IOException {
@@ -43,7 +44,7 @@ public final class OperationsSettings {
         try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             values.load(reader);
         } catch (IOException ignored) {
-            // Missing or unreadable settings fail safe: automation remains disabled.
+            // A missing or unreadable setting is fail-safe: automation remains disabled.
         }
         return values;
     }

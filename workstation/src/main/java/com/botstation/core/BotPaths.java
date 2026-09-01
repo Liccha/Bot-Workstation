@@ -23,7 +23,7 @@ public final class BotPaths {
         this.workstation = workstation;
         this.songBot = component("botstation.songbot.home", "BOT_WORKSTATION_SONGBOT",
             workstation.resolve("components").resolve("SongBot"), desktop.resolve("SongBot"));
-        this.mczMaker = component("botstation.mcz.home", "BOT_WORKSTATION_MCZ",
+        this.mczMaker = preferredDirectory("botstation.mcz.home", "BOT_WORKSTATION_MCZ",
             workstation.resolve("components").resolve("MczMaker"), desktop.resolve("MczMaker"));
         this.napCat = component("botstation.napcat.home", "BOT_WORKSTATION_NAPCAT",
             workstation.resolve("components").resolve("NapCat.Shell"), desktop.resolve("NapCat.Shell"));
@@ -66,6 +66,19 @@ public final class BotPaths {
         return Files.isRegularFile(bundled) ? bundled : legacy;
     }
 
+    /**
+     * Prefer the component shipped beside the application.  An existing legacy
+     * directory is accepted only as a migration fallback for the original owner;
+     * a clean installation must never require somebody else's Desktop layout.
+     */
+    private static Path preferredDirectory(String property, String environment, Path bundled, Path legacy) {
+        Path explicit = explicitPath(property, environment);
+        if (explicit != null) return explicit;
+        if (Files.isDirectory(bundled)) return bundled;
+        if (Files.isDirectory(legacy)) return legacy;
+        return bundled;
+    }
+
     private static Path explicitPath(String property, String environment) {
         String value = System.getProperty(property, "").trim();
         if (value.isEmpty()) value = System.getenv(environment);
@@ -80,5 +93,12 @@ public final class BotPaths {
     }
     public Path logs() { return workstation.resolve("logs"); }
     public Path config() { return workstation.resolve("config"); }
+    public Path userState() {
+        String local = System.getenv("LOCALAPPDATA");
+        Path root = local == null || local.isBlank()
+            ? Paths.get(System.getProperty("user.home"), ".bot-workstation")
+            : Paths.get(local).resolve("Teacharm").resolve("BotWorkstation");
+        return root.toAbsolutePath().normalize();
+    }
     public static boolean isWindows() { return File.separatorChar == '\\'; }
 }

@@ -27,11 +27,13 @@ final class CloudWebsitePostClient {
     private final String apiBase;
     private final String desktopToken;
     private final File backupRoot;
+    private final File syncStateFile;
 
-    private CloudWebsitePostClient(String apiBase, String desktopToken, File backupRoot) {
+    private CloudWebsitePostClient(String apiBase, String desktopToken, File backupRoot, File syncStateFile) {
         this.apiBase = trimSlash(apiBase);
         this.desktopToken = desktopToken;
         this.backupRoot = backupRoot;
+        this.syncStateFile = syncStateFile;
         this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(12)).build();
     }
 
@@ -44,37 +46,46 @@ final class CloudWebsitePostClient {
         String api = firstNonBlank(System.getenv("ANNOUNCEMENT_CLOUD_API"), file.getProperty("api"));
         String token = firstNonBlank(System.getenv("ANNOUNCEMENT_DESKTOP_TOKEN"), file.getProperty("desktopToken"));
         if (api.isEmpty() || token.isEmpty()) throw new IOException("website cloud api or desktop token is missing");
-        return new CloudWebsitePostClient(api, token, new File(new File(songBotDir, "backups"), "website-post-sync"));
+        return new CloudWebsitePostClient(api, token,
+            new File(new File(songBotDir, "backups"), "website-post-sync"),
+            new File(new File(songBotDir, "data"), "website-post-sync-state.json"));
     }
 
-    JSONArray list() throws Exception { return (JSONArray) request("GET", "website-list", null, null, null); }
+    JSONArray list() throws Exception { return (JSONArray) request("GET", "website-list", null, null, null, null); }
 
     JSONObject read(String name) throws Exception {
         validateName(name);
-        return (JSONObject) request("GET", "website-read", name, null, null);
+        return (JSONObject) request("GET", "website-read", name, null, null, null);
     }
 
     JSONObject save(String name, String content, Integer revision) throws Exception {
         validateName(name);
         JSONObject body = new JSONObject().put("name", name).put("content", content);
         if (revision != null) body.put("revision", revision);
-        return (JSONObject) request("POST", "website-save", null, body, null);
+        return (JSONObject) request("POST", "website-save", null, body, null, null);
     }
 
     void delete(String name, int revision) throws Exception {
         validateName(name);
-        request("DELETE", "website-delete", name, null, revision);
+        request("DELETE", "website-delete", name, null, revision, null);
     }
 
     void syncTo(File blogDir) throws Exception {
-        JSONArray summaries = list(); int mirrored = 0; int skipped = 0;
-        for (int i = 0; i < summaries.length(); i++) {
-            JSONObject summary = summaries.optJSONObject(i); if (summary == null) continue;
-            JSONObject post = read(summary.optString("name", ""));
+        long previousRevision = readSyncRevision();
+        JSONObject snapshot = (JSONObject) request("GET", "website-sync", null, null, null, previousRevision);
+        if (snapshot.optBoolean("unchanged", false)) return;
+        JSONArray posts = snapshot.optJSONArray("posts");
+        if (posts == null) throw new IOException("website cloud sync returned no posts");
+        int mirrored = 0; int skipped = 0;
+        for (int i = 0; i < posts.length(); i++) {
+            JSONObject post = posts.optJSONObject(i); if (post == null) continue;
             MirrorResult result = mirrorTo(blogDir, post);
             if (result == MirrorResult.UPDATED) mirrored++;
             if (result == MirrorResult.LOCAL_NEWER) skipped++;
         }
+        long revision = snapshot.optLong("revision", previousRevision);
+        if (revision < previousRevision) throw new IOException("website cloud revision moved backwards");
+        writeSyncRevision(revision);
         if (mirrored > 0 || skipped > 0) System.out.println("[网站文章云同步] 更新 " + mirrored + "，保留本机较新文件 " + skipped);
     }
 
@@ -107,10 +118,11 @@ final class CloudWebsitePostClient {
         return MirrorResult.UPDATED;
     }
 
-    private Object request(String method, String action, String name, JSONObject body, Integer revision) throws Exception {
+    private Object request(String method, String action, String name, JSONObject body, Integer revision, Long after) throws Exception {
         StringBuilder url = new StringBuilder(apiBase).append("?action=").append(URLEncoder.encode(action, StandardCharsets.UTF_8));
         if (name != null) url.append("&name=").append(URLEncoder.encode(name, StandardCharsets.UTF_8));
         if (revision != null) url.append("&revision=").append(revision);
+        if (after != null) url.append("&after=").append(Math.max(0L, after));
         HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url.toString())).timeout(Duration.ofSeconds(30))
             .header("Authorization", "Desktop " + desktopToken).header("X-Admin-Device", "songbot-website-sync").header("Accept", "application/json");
         if (body == null) builder.method(method, HttpRequest.BodyPublishers.noBody());
@@ -119,6 +131,27 @@ final class CloudWebsitePostClient {
         HttpResponse<String> response = http.send(builder.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         if (response.statusCode() < 200 || response.statusCode() >= 300) throw new IOException("website cloud api HTTP " + response.statusCode());
         return new JSONTokener(response.body()).nextValue();
+    }
+
+    private long readSyncRevision() {
+        try {
+            if (!syncStateFile.isFile()) return 0L;
+            return Math.max(0L, new JSONObject(Files.readString(syncStateFile.toPath(), StandardCharsets.UTF_8)).optLong("revision", 0L));
+        } catch (Exception ignored) { return 0L; }
+    }
+
+    private void writeSyncRevision(long revision) throws IOException {
+        File parent = syncStateFile.getParentFile();
+        if (parent != null) parent.mkdirs();
+        File temp = File.createTempFile(".website-sync-state-", ".tmp", parent);
+        try {
+            Files.writeString(temp.toPath(), new JSONObject().put("revision", Math.max(0L, revision))
+                .put("updatedAt", LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)).toString(), StandardCharsets.UTF_8);
+            try { Files.move(temp.toPath(), syncStateFile.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE); }
+            catch (java.nio.file.AtomicMoveNotSupportedException ex) {
+                Files.move(temp.toPath(), syncStateFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally { Files.deleteIfExists(temp.toPath()); }
     }
 
     private File backupFile(String name) {

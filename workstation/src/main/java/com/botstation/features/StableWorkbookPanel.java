@@ -40,6 +40,10 @@ public final class StableWorkbookPanel extends JPanel {
         search.putClientProperty("JTextField.placeholderText", "筛选 SID、曲名、作者或谱师");
         search.getDocument().addDocumentListener((SongLibraryPanel.SimpleDocumentListener) event -> filter());
         JButton add = UiKit.button("新增一行"); add.addActionListener(event -> addRow());
+        if (repository.cloudMode()) {
+            add.setEnabled(false);
+            add.setToolTipText("外部工作站可编辑现有云端记录，新增记录由主工作站完成");
+        }
         main.add(UiKit.flow(search, status, add), BorderLayout.NORTH);
         main.add(UiKit.tableScroll(table), BorderLayout.CENTER); add(main, BorderLayout.CENTER); reload();
     }

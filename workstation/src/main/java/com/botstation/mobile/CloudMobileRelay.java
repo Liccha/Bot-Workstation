@@ -1,6 +1,7 @@
 package com.botstation.mobile;
 
 import com.botstation.core.BotPaths;
+import com.botstation.core.CloudEndpoints;
 import com.botstation.core.LogBus;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -69,7 +70,7 @@ final class CloudMobileRelay implements AutoCloseable {
         String api = properties.getProperty("api", "").trim();
         String token = properties.getProperty("desktopToken", "").trim();
         if (api.isEmpty() || token.isEmpty()) return null;
-        URI announcement = URI.create(api);
+        URI announcement = CloudEndpoints.migrateLegacy(URI.create(api));
         URI relay = URI.create(announcement.getScheme() + "://" + announcement.getRawAuthority() + "/api/mobile-relay");
         String host;
         try { host = InetAddress.getLocalHost().getHostName(); } catch (Exception ignored) { host = "desktop"; }
@@ -201,7 +202,7 @@ final class CloudMobileRelay implements AutoCloseable {
             || !"/api/mobile-relay".equals(value.getPath())) throw new IllegalArgumentException("云端中继地址无效");
         String scheme = String.valueOf(value.getScheme()).toLowerCase(Locale.ROOT);
         String host = value.getHost().toLowerCase(Locale.ROOT);
-        boolean production = "editor.teacharm.moe".equals(host) || "bot-editor.vercel.app".equals(host);
+        boolean production = CloudEndpoints.isProductionHost(host);
         boolean local = "http".equals(scheme) && ("127.0.0.1".equals(host) || "localhost".equals(host));
         if (!("https".equals(scheme) && production) && !local) throw new IllegalArgumentException("云端中继必须使用受信任的 HTTPS 域名");
         return value;

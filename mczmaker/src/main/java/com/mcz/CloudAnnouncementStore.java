@@ -106,6 +106,25 @@ final class CloudAnnouncementStore {
     }
 
     private String request(String method, String suffix, String body) throws IOException {
+        int attempts = "GET".equals(method) ? 3 : 1;
+        IOException last = null;
+        for (int attempt = 1; attempt <= attempts; attempt++) {
+            try {
+                return requestOnce(method, suffix, body);
+            } catch (IOException error) {
+                last = error;
+                if (attempt >= attempts || !isTransient(error)) throw error;
+                try { Thread.sleep(attempt == 1 ? 250L : 800L); }
+                catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("云公告读取已取消", interrupted);
+                }
+            }
+        }
+        throw last == null ? new IOException("云公告请求失败") : last;
+    }
+
+    private String requestOnce(String method, String suffix, String body) throws IOException {
         HttpURLConnection conn = (HttpURLConnection) new URL(api + suffix).openConnection();
         conn.setConnectTimeout(12000);
         conn.setReadTimeout(30000);
@@ -127,6 +146,14 @@ final class CloudAnnouncementStore {
         if (status == 409) throw new IOException("云端公告已被其他管理员修改，请重新载入后再编辑");
         if (status < 200 || status >= 300) throw new IOException("云公告服务请求失败（HTTP " + status + "）");
         return response;
+    }
+
+    private static boolean isTransient(IOException error) {
+        String message = String.valueOf(error.getMessage()).toLowerCase(Locale.ROOT);
+        return message.contains("connection reset") || message.contains("connection timed out")
+            || message.contains("connect timed out") || message.contains("read timed out")
+            || message.contains("unexpected end of file") || message.contains("http 429")
+            || message.matches(".*http 5\\d\\d.*");
     }
 
     private static String readAll(InputStream input) throws IOException {

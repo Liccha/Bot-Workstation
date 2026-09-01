@@ -58,8 +58,9 @@ public final class SongLibraryPanel extends JPanel {
     public SongLibraryPanel(BotPaths paths, LogBus log, TaskRunner tasks) {
         super(new BorderLayout(0, 18));
         this.database = paths.songDatabase;
-        this.repository = new SongLibraryRepository(database); this.log = log; this.tasks = tasks;
-        this.assets = new SongAssetService(paths, log);
+        CloudLibraryClient cloud = new CloudLibraryClient(paths.userState().resolve("library"));
+        this.repository = new SongLibraryRepository(database, cloud); this.log = log; this.tasks = tasks;
+        this.assets = new SongAssetService(paths, log, repository);
         setBackground(DesignTokens.PAPER); setBorder(BorderFactory.createEmptyBorder(24, 26, 20, 26));
         JButton reload = UiKit.button("重新读取"); reload.addActionListener(event -> reload());
         add(UiKit.pageHeader("歌曲信息", "点击保存修改，将直接提交至Bot", reload), BorderLayout.NORTH);
@@ -73,6 +74,7 @@ public final class SongLibraryPanel extends JPanel {
         main.add(toolbar, BorderLayout.NORTH); main.add(UiKit.tableScroll(table), BorderLayout.CENTER);
         add(main, BorderLayout.CENTER); reload();
         javax.swing.Timer cloudRefresh = new javax.swing.Timer(2_500, event -> {
+            if (repository.cloudMode()) return;
             if (!loading && isShowing() && databaseStamp() > knownDatabaseStamp) reload();
         });
         cloudRefresh.setRepeats(true);
@@ -156,7 +158,8 @@ public final class SongLibraryPanel extends JPanel {
             labelConstraints.insets = new Insets(5, 0, 5, 12);
             JLabel label = new JLabel(editorFieldLabel(column)); label.setFont(DesignTokens.CAPTION); label.setForeground(DesignTokens.MUTED);
             form.add(label, labelConstraints);
-            JTextField field = UiKit.field(42); field.setText(selected.getOrDefault(column, "")); field.setEditable(!column.equals(idColumn));
+            JTextField field = UiKit.field(42); field.setText(selected.getOrDefault(column, ""));
+            field.setEditable(!column.equals(idColumn) && !isManagedSongAssetField(column));
             GridBagConstraints fieldConstraints = new GridBagConstraints();
             fieldConstraints.gridx = 1; fieldConstraints.gridy = row++; fieldConstraints.weightx = 1; fieldConstraints.fill = GridBagConstraints.HORIZONTAL;
             fieldConstraints.insets = new Insets(5, 0, 5, 0); form.add(field, fieldConstraints); fields.put(column, field);
@@ -165,20 +168,63 @@ public final class SongLibraryPanel extends JPanel {
         JButton cancel = UiKit.button("取消"); cancel.addActionListener(event -> dialog.dispose());
         JButton cover = UiKit.button("更换歌曲图片");
         JButton audio = UiKit.button("更换歌曲音频");
+        JButton delete = UiKit.button("删除歌曲"); delete.setForeground(DesignTokens.DANGER);
         cover.addActionListener(event -> selectAsset(dialog, selected.get(idColumn), "image", cover, audio));
         audio.addActionListener(event -> selectAsset(dialog, selected.get(idColumn), "audio", cover, audio));
         JButton save = UiKit.primaryButton("保存修改");
         save.addActionListener(event -> {
-            Map<String, String> values = new LinkedHashMap<>(); fields.forEach((key, field) -> values.put(key, field.getText()));
+            Map<String, String> edited = new LinkedHashMap<>(); fields.forEach((key, field) -> edited.put(key, field.getText()));
+            Map<String, String> values = changedValues(selected, edited, idColumn);
+            if (values.isEmpty()) { dialog.dispose(); return; }
             save.setEnabled(false);
             tasks.run(() -> { repository.update(idColumn, selected.get(idColumn), values); return null; }, ignored -> {
                 log.info("歌曲信息", "已更新 ID " + selected.get(idColumn) + " · " + values.getOrDefault(findColumn("song_name"), ""));
                 dialog.dispose(); reload();
-            }, error -> { save.setEnabled(true); showError("保存失败，数据库没有发生部分写入", error); });
+            }, error -> { save.setEnabled(true); showError("保存失败，修改未能确认", error); });
         });
-        JPanel buttons = editorActionBar(cover, audio, cancel, save);
+        delete.addActionListener(event -> {
+            String id = selected.get(idColumn);
+            String name = selected.getOrDefault(findColumn("song_name"), "");
+            int answer = JOptionPane.showConfirmDialog(dialog,
+                "确认删除？", "删除歌曲", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (answer != JOptionPane.YES_OPTION) return;
+            delete.setEnabled(false); save.setEnabled(false);
+            tasks.run(() -> { assets.deleteSong(id); return null; }, ignored -> {
+                log.info("歌曲信息", "已删除 ID " + id + " · " + name);
+                dialog.dispose(); reload();
+            }, error -> { delete.setEnabled(true); save.setEnabled(true); showError("删除失败，歌曲记录未能确认释放", error); });
+        });
+        JPanel buttons = editorActionBar(cover, audio, delete, cancel, save);
         dialog.add(scroll, BorderLayout.CENTER); dialog.add(buttons, BorderLayout.SOUTH);
-        dialog.setSize(new Dimension(700, 720)); dialog.setLocationRelativeTo(owner); dialog.setVisible(true);
+        int minimumWidth = Math.max(760, buttons.getPreferredSize().width + 36);
+        dialog.setSize(new Dimension(minimumWidth, 720)); dialog.setLocationRelativeTo(owner); dialog.setVisible(true);
+    }
+
+    static Map<String, String> changedValues(Map<String, String> original, Map<String, String> edited, String idColumn) {
+        Map<String, String> changes = new LinkedHashMap<>();
+        if (edited == null) return changes;
+        for (Map.Entry<String, String> entry : edited.entrySet()) {
+            String column = entry.getKey();
+            if (column == null || column.equalsIgnoreCase(idColumn) || isManagedSongAssetField(column)) continue;
+            String next = entry.getValue() == null ? "" : entry.getValue();
+            String before = valueIgnoreCase(original, column);
+            if (!next.equals(before)) changes.put(column, next);
+        }
+        return changes;
+    }
+
+    private static String valueIgnoreCase(Map<String, String> values, String expected) {
+        if (values == null) return "";
+        for (Map.Entry<String, String> entry : values.entrySet()) {
+            if (entry.getKey() != null && entry.getKey().equalsIgnoreCase(expected))
+                return entry.getValue() == null ? "" : entry.getValue();
+        }
+        return "";
+    }
+
+    private static boolean isManagedSongAssetField(String column) {
+        return column != null && (column.equalsIgnoreCase("album_image_path")
+            || column.equalsIgnoreCase("image_path") || column.equalsIgnoreCase("audio_path"));
     }
 
     private void selectAsset(JDialog dialog, String id, String type, JButton cover, JButton audio) {
@@ -203,14 +249,17 @@ public final class SongLibraryPanel extends JPanel {
 
     /* Hallmark · component: editor action bar · genre: modern-minimal · theme: Bot workstation
        States remain owned by UiKit and the existing async handlers; spacing follows the 8/16 rhythm. */
-    static JPanel editorActionBar(JButton cover, JButton audio, JButton cancel, JButton save) {
+    static JPanel editorActionBar(JButton cover, JButton audio, JButton delete, JButton cancel, JButton save) {
         equalizeButtonWidths(cover, audio);
         equalizeButtonWidths(cancel, save);
+        preserveButtonText(delete);
 
         JPanel resources = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         resources.setOpaque(false);
         resources.add(cover);
         resources.add(audio);
+        resources.add(javax.swing.Box.createHorizontalStrut(8));
+        resources.add(delete);
 
         JPanel decisions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         decisions.setOpaque(false);
@@ -239,7 +288,14 @@ public final class SongLibraryPanel extends JPanel {
             height = Math.max(height, preferred.height);
         }
         Dimension shared = new Dimension(width, height);
-        for (JButton button : buttons) button.setPreferredSize(shared);
+        for (JButton button : buttons) { button.setPreferredSize(shared); button.setMinimumSize(shared); }
+    }
+
+    private static void preserveButtonText(JButton button) {
+        Dimension preferred = button.getPreferredSize();
+        int textWidth = button.getFontMetrics(button.getFont()).stringWidth(button.getText()) + 28;
+        Dimension safe = new Dimension(Math.max(preferred.width, textWidth), preferred.height);
+        button.setPreferredSize(safe); button.setMinimumSize(safe);
     }
 
     private void setBusy(boolean busy, String text) { search.setEnabled(!busy); table.setEnabled(!busy); count.setText(text); }

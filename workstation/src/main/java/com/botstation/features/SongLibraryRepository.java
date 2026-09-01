@@ -19,13 +19,22 @@ import java.util.Map;
 final class SongLibraryRepository {
     private final Path database;
     private final Path csv;
+    private final CloudLibraryClient cloud;
+    private final boolean localAvailable;
 
     SongLibraryRepository(Path database) {
+        this(database, null);
+    }
+
+    SongLibraryRepository(Path database, CloudLibraryClient cloud) {
         this.database = database;
         this.csv = database.getParent() == null ? null : database.getParent().resolve("songs.csv");
+        this.localAvailable = localDatabaseAvailable(database);
+        this.cloud = cloud;
     }
 
     Snapshot load() throws Exception {
+        if (!localAvailable && cloud != null) return cloud.loadSongs();
         try (Connection connection = open(); Statement statement = connection.createStatement();
              ResultSet results = statement.executeQuery("SELECT * FROM songs ORDER BY id")) {
             ResultSetMetaData metadata = results.getMetaData();
@@ -45,6 +54,10 @@ final class SongLibraryRepository {
     }
 
     void update(String idColumn, String id, Map<String, String> values) throws Exception {
+        if (cloud != null) {
+            cloud.updateSong(id, values);
+            if (!localAvailable) return;
+        }
         if (idColumn == null || idColumn.isBlank()) throw new IllegalArgumentException("歌曲表没有主键");
         List<String> writable = new ArrayList<>();
         for (String column : values.keySet()) if (!column.equalsIgnoreCase(idColumn)) writable.add(column);
@@ -75,6 +88,162 @@ final class SongLibraryRepository {
         }
     }
 
+    void create(String idColumn, String id, Map<String, String> values) throws Exception {
+        if (cloud != null) {
+            cloud.createSong(id, values);
+            if (!localAvailable) return;
+        }
+        if (idColumn == null || idColumn.isBlank()) throw new IllegalArgumentException("歌曲表没有主键");
+        Snapshot snapshot = load();
+        String actualId = snapshot.columns.stream().filter(column -> column.equalsIgnoreCase(idColumn)).findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("歌曲表没有主键"));
+        Map<String, String> existing = null;
+        for (Map<String, String> row : snapshot.rows) {
+            if (id.equals(row.getOrDefault(actualId, "").trim())) { existing = row; break; }
+        }
+
+        LinkedHashMap<String, String> record = new LinkedHashMap<>();
+        for (String column : snapshot.columns)
+            record.put(column, existing == null ? "" : existing.getOrDefault(column, ""));
+        record.put(actualId, id);
+        for (Map.Entry<String, String> entry : values.entrySet()) {
+            String actual = snapshot.columns.stream().filter(column -> column.equalsIgnoreCase(entry.getKey())).findFirst().orElse(null);
+            if (actual != null && !actual.equalsIgnoreCase(actualId)) record.put(actual, entry.getValue() == null ? "" : entry.getValue());
+        }
+
+        byte[] csvBefore = csv != null && Files.isRegularFile(csv) ? Files.readAllBytes(csv) : null;
+        if (csv != null) upsertCsv(csvBefore, snapshot.columns, actualId, id, record);
+        try (Connection connection = open()) {
+            connection.setAutoCommit(false);
+            try {
+                if (existing == null) insertRecord(connection, snapshot.columns, record);
+                else updateRecord(connection, snapshot.columns, actualId, id, record);
+                connection.commit();
+            } catch (Exception error) {
+                connection.rollback();
+                if (csv != null) {
+                    try {
+                        if (csvBefore == null) Files.deleteIfExists(csv); else writeAtomic(csv, csvBefore);
+                    } catch (Exception restore) { error.addSuppressed(restore); }
+                }
+                throw error;
+            } finally { connection.setAutoCommit(true); }
+        }
+    }
+
+    void delete(String idColumn, String id) throws Exception {
+        if (cloud != null) {
+            cloud.deleteSong(id);
+            if (!localAvailable) return;
+        }
+        if (idColumn == null || idColumn.isBlank()) throw new IllegalArgumentException("歌曲表没有主键");
+        byte[] csvBefore = csv != null && Files.isRegularFile(csv) ? Files.readAllBytes(csv) : null;
+        if (csvBefore != null) deleteCsv(csvBefore, idColumn, id);
+        String sql = "DELETE FROM songs WHERE " + quote(idColumn) + "=?";
+        try (Connection connection = open()) {
+            connection.setAutoCommit(false);
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                statement.setString(1, id);
+                statement.executeUpdate(); // Idempotent so a replayed cloud deletion is safe.
+                connection.commit();
+            } catch (Exception error) {
+                connection.rollback();
+                if (csvBefore != null) {
+                    try { writeAtomic(csv, csvBefore); } catch (Exception restore) { error.addSuppressed(restore); }
+                }
+                throw error;
+            } finally { connection.setAutoCommit(true); }
+        }
+    }
+
+    private static void insertRecord(Connection connection, List<String> tableColumns,
+                                     Map<String, String> record) throws Exception {
+        StringBuilder columns = new StringBuilder();
+        StringBuilder placeholders = new StringBuilder();
+        for (int index = 0; index < tableColumns.size(); index++) {
+            if (index > 0) { columns.append(','); placeholders.append(','); }
+            columns.append(quote(tableColumns.get(index))); placeholders.append('?');
+        }
+        String sql = "INSERT INTO songs (" + columns + ") VALUES (" + placeholders + ")";
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            int parameter = 1;
+            for (String column : tableColumns) statement.setString(parameter++, record.getOrDefault(column, ""));
+            statement.executeUpdate();
+        }
+    }
+
+    private static void updateRecord(Connection connection, List<String> tableColumns,
+                                     String idColumn, String id, Map<String, String> record) throws Exception {
+        List<String> writable = new ArrayList<>();
+        for (String column : tableColumns) if (!column.equalsIgnoreCase(idColumn)) writable.add(column);
+        if (writable.isEmpty()) return;
+        StringBuilder sql = new StringBuilder("UPDATE songs SET ");
+        for (int index = 0; index < writable.size(); index++) {
+            if (index > 0) sql.append(',');
+            sql.append(quote(writable.get(index))).append("=?");
+        }
+        sql.append(" WHERE ").append(quote(idColumn)).append("=?");
+        try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
+            int parameter = 1;
+            for (String column : writable) statement.setString(parameter++, record.getOrDefault(column, ""));
+            statement.setString(parameter, id);
+            if (statement.executeUpdate() != 1) throw new IllegalStateException("歌曲记录已不存在或主键不唯一");
+        }
+    }
+
+    /** Reconciles full-snapshot CSV state with a replayable cloud create event. */
+    private void upsertCsv(byte[] original, List<String> tableColumns, String idColumn,
+                           String id, Map<String, String> record) throws Exception {
+        if (original == null) {
+            appendCsv(null, tableColumns, record);
+            return;
+        }
+        boolean bom = original.length >= 3 && (original[0] & 0xff) == 0xef
+            && (original[1] & 0xff) == 0xbb && (original[2] & 0xff) == 0xbf;
+        String text = new String(original, bom ? 3 : 0, original.length - (bom ? 3 : 0), StandardCharsets.UTF_8);
+        List<List<String>> records = parseCsv(text);
+        if (records.isEmpty()) {
+            appendCsv(null, tableColumns, record);
+            return;
+        }
+        List<String> headers = records.get(0);
+        for (String column : tableColumns) {
+            if (indexIgnoreCase(headers, column) >= 0) continue;
+            headers.add(column);
+            for (int row = 1; row < records.size(); row++) records.get(row).add("");
+        }
+        int idIndex = indexIgnoreCase(headers, idColumn);
+        if (idIndex < 0) throw new IllegalStateException("songs.csv 没有歌曲 ID 字段，已取消保存");
+        List<String> target = null;
+        for (int row = 1; row < records.size(); row++) {
+            List<String> candidate = records.get(row);
+            if (idIndex < candidate.size() && id.equals(candidate.get(idIndex).trim())) { target = candidate; break; }
+        }
+        if (target == null) {
+            target = new ArrayList<>();
+            for (int column = 0; column < headers.size(); column++) target.add("");
+            records.add(target);
+        }
+        while (target.size() < headers.size()) target.add("");
+        for (int column = 0; column < headers.size(); column++) {
+            String header = headers.get(column);
+            String actual = tableColumns.stream().filter(value -> value.equalsIgnoreCase(header)).findFirst().orElse(null);
+            if (actual != null) target.set(column, record.getOrDefault(actual, ""));
+        }
+        target.set(idIndex, id);
+        StringBuilder output = new StringBuilder();
+        if (bom) output.append('\ufeff');
+        for (List<String> row : records) {
+            while (row.size() < headers.size()) row.add("");
+            for (int column = 0; column < headers.size(); column++) {
+                if (column > 0) output.append(',');
+                output.append(escapeCsv(row.get(column)));
+            }
+            output.append("\r\n");
+        }
+        writeAtomic(csv, output.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
     private void updateCsv(byte[] original, String idColumn, String id, Map<String, String> values) throws Exception {
         boolean bom = original.length >= 3 && (original[0] & 0xff) == 0xef && (original[1] & 0xff) == 0xbb && (original[2] & 0xff) == 0xbf;
         String text = new String(original, bom ? 3 : 0, original.length - (bom ? 3 : 0), StandardCharsets.UTF_8);
@@ -103,6 +272,53 @@ final class SongLibraryRepository {
             }
             output.append("\r\n");
         }
+        writeAtomic(csv, output.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    private void deleteCsv(byte[] original, String idColumn, String id) throws Exception {
+        boolean bom = original.length >= 3 && (original[0] & 0xff) == 0xef
+            && (original[1] & 0xff) == 0xbb && (original[2] & 0xff) == 0xbf;
+        String text = new String(original, bom ? 3 : 0, original.length - (bom ? 3 : 0), StandardCharsets.UTF_8);
+        List<List<String>> records = parseCsv(text);
+        if (records.isEmpty()) return;
+        List<String> headers = records.get(0);
+        int idIndex = indexIgnoreCase(headers, idColumn);
+        if (idIndex < 0) throw new IllegalStateException("songs.csv 没有歌曲 ID 字段，已取消删除");
+        records.subList(1, records.size()).removeIf(record ->
+            idIndex < record.size() && id.equals(record.get(idIndex).trim()));
+        StringBuilder output = new StringBuilder();
+        if (bom) output.append('\ufeff');
+        for (List<String> record : records) {
+            while (record.size() < headers.size()) record.add("");
+            for (int column = 0; column < headers.size(); column++) {
+                if (column > 0) output.append(',');
+                output.append(escapeCsv(record.get(column)));
+            }
+            output.append("\r\n");
+        }
+        writeAtomic(csv, output.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    private void appendCsv(byte[] original, List<String> columns, Map<String, String> record) throws Exception {
+        boolean bom = original != null && original.length >= 3 && (original[0] & 0xff) == 0xef
+            && (original[1] & 0xff) == 0xbb && (original[2] & 0xff) == 0xbf;
+        StringBuilder output = new StringBuilder();
+        if (original == null) {
+            output.append('\ufeff');
+            for (int index = 0; index < columns.size(); index++) {
+                if (index > 0) output.append(',');
+                output.append(escapeCsv(columns.get(index)));
+            }
+            output.append("\r\n");
+        } else {
+            output.append(new String(original, StandardCharsets.UTF_8));
+            if (output.length() > 0 && output.charAt(output.length() - 1) != '\n') output.append("\r\n");
+        }
+        for (int index = 0; index < columns.size(); index++) {
+            if (index > 0) output.append(',');
+            output.append(escapeCsv(record.getOrDefault(columns.get(index), "")));
+        }
+        output.append("\r\n");
         writeAtomic(csv, output.toString().getBytes(StandardCharsets.UTF_8));
     }
 
@@ -145,6 +361,14 @@ final class SongLibraryRepository {
         Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
         try (Statement statement = connection.createStatement()) { statement.execute("PRAGMA busy_timeout=8000"); }
         return connection;
+    }
+
+    boolean cloudMode() { return !localAvailable && cloud != null; }
+    CloudLibraryClient cloudClient() { return cloud; }
+
+    private static boolean localDatabaseAvailable(Path database) {
+        try { return Files.isRegularFile(database) && Files.size(database) > 0; }
+        catch (Exception ignored) { return false; }
     }
 
     private static String quote(String identifier) {

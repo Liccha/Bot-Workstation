@@ -13,11 +13,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
+import java.util.List;
 import java.util.Locale;
 
 /** Public, signed-by-hash update feed. Cloud credentials are never needed by clients. */
 public final class UpdateService {
-    public static final String CURRENT_VERSION = "1.1.13";
+    public static final String CURRENT_VERSION = "1.1.30";
     public static final String MANIFEST_URL =
         "https://assets.teacharm.moe/bot-workstation/releases/latest.json";
     private static final long MAX_MANIFEST_BYTES = 64 * 1024;
@@ -89,10 +90,55 @@ public final class UpdateService {
         } finally {
             connection.disconnect();
         }
-        new ProcessBuilder(output.toString(), "/SILENT", "/SUPPRESSMSGBOXES", "/CLOSEAPPLICATIONS")
+        Path installLog = updateLogFile();
+        Files.createDirectories(installLog.getParent());
+        deferredInstaller(output, installLog, ProcessHandle.current().pid())
             .directory(output.getParent().toFile()).start();
-        log.info("自动更新", "已校验并启动 " + release.version + " 安装程序");
+        log.info("自动更新", "已校验 " + release.version + "；主程序退出后安装，日志：" + installLog);
         return output;
+    }
+
+    static List<String> installerArguments(Path installLog) {
+        return List.of(
+            "/SILENT",
+            "/CLOSEAPPLICATIONS",
+            "/FORCECLOSEAPPLICATIONS",
+            "/NORESTARTAPPLICATIONS",
+            "/NORESTART",
+            "/LOGCLOSEAPPLICATIONS",
+            "/LOG=\"" + installLog.toAbsolutePath().normalize() + "\""
+        );
+    }
+
+    /**
+     * The installer must not race the still-running JVM which owns the JAR and
+     * runtime files it is about to replace. A hidden, detached Windows helper
+     * waits for this process to exit, then starts Setup with a durable log.
+     */
+    static ProcessBuilder deferredInstaller(Path setup, Path installLog, long parentPid) {
+        String script = "$ErrorActionPreference='Stop'; "
+            + "try { Wait-Process -Id ([long]$env:BOT_UPDATE_PARENT_PID) -Timeout 60 -ErrorAction SilentlyContinue } catch {}; "
+            + "Start-Sleep -Milliseconds 1500; "
+            + "$arguments=$env:BOT_UPDATE_ARGUMENTS -split [Environment]::NewLine; "
+            + "try { $process=Start-Process -FilePath $env:BOT_UPDATE_SETUP -ArgumentList $arguments -Wait -PassThru; exit $process.ExitCode } "
+            + "catch { ('launcher_failed: ' + $_.Exception.Message) | Out-File -LiteralPath $env:BOT_UPDATE_LOG -Encoding utf8 -Append; exit 2 }";
+        ProcessBuilder builder = new ProcessBuilder(
+            "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
+            "-WindowStyle", "Hidden", "-Command", script);
+        builder.environment().put("BOT_UPDATE_PARENT_PID", Long.toString(parentPid));
+        builder.environment().put("BOT_UPDATE_SETUP", setup.toAbsolutePath().normalize().toString());
+        builder.environment().put("BOT_UPDATE_LOG", installLog.toAbsolutePath().normalize().toString());
+        builder.environment().put("BOT_UPDATE_ARGUMENTS",
+            String.join(System.lineSeparator(), installerArguments(installLog)));
+        return builder;
+    }
+
+    private static Path updateLogFile() {
+        String local = System.getenv("LOCALAPPDATA");
+        Path base = local == null || local.isBlank()
+            ? Path.of(System.getProperty("user.home"), ".bot-workstation")
+            : Path.of(local, "Teacharm", "BotWorkstation");
+        return base.resolve("logs").resolve("update-install.log").toAbsolutePath().normalize();
     }
 
     private static HttpURLConnection open(URL url, int connectTimeout, int readTimeout) throws IOException {

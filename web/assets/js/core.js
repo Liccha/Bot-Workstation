@@ -17,7 +17,7 @@ var IS_LOCAL_HOST = location.hostname==='localhost'
 	|| location.hostname==='[::1]';
 // All browser APIs are same-origin. Public deployments are served by Vercel
 // functions; localhost is served by SongBot's local compatibility endpoints.
-var API_BASE = '';
+var API_BASE = String(window.SONGBOT_API_BASE || '').replace(/\/+$/, '');
 var _trackUrl = API_BASE+'/api/visit';
 var _visitDevice=(function(){
 	try{

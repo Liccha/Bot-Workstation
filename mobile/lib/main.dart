@@ -77,28 +77,36 @@ class _BotWorkstationAppState extends State<BotWorkstationApp> {
       if (install == true) {
         final progress = ValueNotifier<double>(0);
         if (dialogContext.mounted) {
-          unawaited(showDialog<void>(
-            context: dialogContext,
-            barrierDismissible: false,
-            builder: (context) => PopScope(
-              canPop: false,
-              child: AlertDialog(
-                title: const Text('正在下载更新'),
-                content: ValueListenableBuilder<double>(
-                  valueListenable: progress,
-                  builder: (context, value, _) => Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      LinearProgressIndicator(value: value > 0 ? value.clamp(0, 1) : null),
-                      const SizedBox(height: 12),
-                      Text(value > 0 ? '${(value * 100).clamp(0, 100).toStringAsFixed(0)}%' : '正在连接版本服务…'),
-                    ],
+          unawaited(
+            showDialog<void>(
+              context: dialogContext,
+              barrierDismissible: false,
+              builder: (context) => PopScope(
+                canPop: false,
+                child: AlertDialog(
+                  title: const Text('正在下载更新'),
+                  content: ValueListenableBuilder<double>(
+                    valueListenable: progress,
+                    builder: (context, value, _) => Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        LinearProgressIndicator(
+                          value: value > 0 ? value.clamp(0, 1) : null,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          value > 0
+                              ? '${(value * 100).clamp(0, 100).toStringAsFixed(0)}%'
+                              : '正在连接版本服务…',
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ));
+          );
         }
         try {
           await widget.controller.mobileUpdates.downloadAndInstall(

@@ -15,6 +15,8 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.io.File;
+import java.nio.file.InvalidPathException;
+import java.util.Locale;
 import java.util.Set;
 import java.util.HashSet;
 import java.util.concurrent.Executors;
@@ -324,16 +326,21 @@ public class Stable {
         finalMsg.append("【如何下载谱面】↓↓\n");
         finalMsg.append("https://m.mugzone.net/wiki/2438");
 
-        // 拼接图片部分
+        // Embed the bytes instead of passing a local file URI to NapCat. The
+        // bot and NapCat are separate processes; after workstation updates or
+        // service restarts NapCat may not be able to resolve the Java process'
+        // local path even though Java can see it. A base64 OneBot image segment
+        // is self-contained and also avoids path/encoding differences.
         if (cover != null && !cover.trim().isEmpty()) {
-            java.io.File imgFile = new java.io.File(cover);
-            if (imgFile.exists()) {
-                String absPath = imgFile.getAbsolutePath().replace("\\", "/");
-                String safePath = absPath.replace("&", "&amp;")
-                        .replace("[", "&#91;")
-                        .replace("]", "&#93;")
-                        .replace(",", "&#44;");
-                finalMsg.append("\n[CQ:image,file=file:///").append(safePath).append("]");
+            java.io.File imgFile = resolveCoverFile(cover, sid);
+            if (imgFile != null) {
+                byte[] bytes = Files.readAllBytes(imgFile.toPath());
+                String encoded = java.util.Base64.getEncoder().encodeToString(bytes);
+                finalMsg.append("\n[CQ:image,file=base64://")
+                        .append(encoded)
+                        .append("]");
+            } else {
+                System.err.println("⚠️ Stable 封面不存在，sid=" + sid + "，cover=" + cover);
             }
         }
 
@@ -344,4 +351,65 @@ public class Stable {
         } else {
             System.out.println("✅ 特定群谱面查询响应成功！曲目: " + title);
         }
-    }}
+    }
+
+    /**
+     * Resolves normal cover paths and legacy uncalculated Excel formula text,
+     * such as {@code "C:\\...\\stable_cover\\"&A2&".webp"}.
+     * Stable cover files are keyed by SID, not by spreadsheet row number.
+     */
+    static File resolveCoverFile(String cover, String sid) {
+        if (cover == null || sid == null || sid.trim().isEmpty()) return null;
+        String raw = cover.trim();
+        List<Path> candidates = new ArrayList<>();
+
+        if (!raw.isEmpty() && !raw.equalsIgnoreCase("AUTO")) {
+            String dequoted = raw.replace("\"", "").trim();
+            if (!dequoted.matches("(?i).*&A\\d+&.*")) addPathCandidate(candidates, dequoted);
+
+            String lower = dequoted.toLowerCase(Locale.ROOT);
+            int stableCover = lower.lastIndexOf("stable_cover");
+            if (stableCover >= 0) {
+                String directory = dequoted.substring(0, stableCover + "stable_cover".length());
+                addSidCandidates(candidates, directory, sid.trim());
+            }
+
+            try {
+                Path supplied = Path.of(dequoted);
+                Path parent = supplied.getParent();
+                if (parent != null) addSidCandidates(candidates, parent.toString(), sid.trim());
+            } catch (InvalidPathException ignored) { }
+        }
+
+        String configured = System.getProperty("stable.cover.dir", "").trim();
+        if (!configured.isEmpty()) addSidCandidates(candidates, configured, sid.trim());
+        Path working = Path.of("").toAbsolutePath().normalize();
+        addSidCandidates(candidates, working.resolve("stable_cover").toString(), sid.trim());
+        Path parent = working.getParent();
+        if (parent != null) addSidCandidates(candidates, parent.resolve("stable_cover").toString(), sid.trim());
+
+        for (Path candidate : candidates) {
+            try {
+                if (Files.isRegularFile(candidate)) return candidate.toFile();
+            } catch (SecurityException ignored) { }
+        }
+        return null;
+    }
+
+    private static void addPathCandidate(List<Path> candidates, String text) {
+        try {
+            Path path = Path.of(text).toAbsolutePath().normalize();
+            if (!candidates.contains(path)) candidates.add(path);
+        } catch (InvalidPathException ignored) { }
+    }
+
+    private static void addSidCandidates(List<Path> candidates, String directory, String sid) {
+        try {
+            Path root = Path.of(directory).toAbsolutePath().normalize();
+            for (String extension : new String[]{".webp", ".png", ".jpg", ".jpeg"}) {
+                Path path = root.resolve(sid + extension);
+                if (!candidates.contains(path)) candidates.add(path);
+            }
+        } catch (InvalidPathException ignored) { }
+    }
+}

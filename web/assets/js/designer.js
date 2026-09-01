@@ -267,7 +267,6 @@ function cardCSS(){
 		function ps3(label,id,opts,val){var h="<div class='ds-prop'><label>"+label+"</label><select data-sid='"+id+"'>";opts.forEach(function(o){h+="<option value='"+o[0]+"'"+(o[0]===val?" selected":"")+">"+o[1]+"</option>"});h+="</select></div>";return h}
 		function pch(label,id){var name=id.split(".")[0];return '<div class="ds-prop"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" data-path="_ds.'+id+'" '+(getVal("_ds."+name+".visible")!==false?"checked":"")+'> '+label+'</label></div>'}
 
-
 		function bindPropEvents(){
 			props.querySelectorAll("input[type=range]").forEach(function(el){
 				var path=el.dataset.path,sid=el.dataset.sid;
@@ -351,7 +350,6 @@ function cardCSS(){
 				})
 			});
 		}
-
 
 		var _dsPreviewQueued=false;
 		function queuePreview(){

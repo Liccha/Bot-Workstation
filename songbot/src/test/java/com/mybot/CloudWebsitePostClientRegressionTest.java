@@ -19,21 +19,35 @@ public final class CloudWebsitePostClientRegressionTest {
         Path posts = root.resolve("posts"); Files.createDirectories(posts);
         AtomicReference<String> cloudContent = new AtomicReference<>("云端第一版");
         AtomicLong cloudModified = new AtomicLong(System.currentTimeMillis());
+        AtomicLong cloudRevision = new AtomicLong(1L);
+        AtomicLong snapshotRequests = new AtomicLong();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         try {
             server.createContext("/api", exchange -> {
                 require("Desktop test-desktop-token".equals(exchange.getRequestHeaders().getFirst("Authorization")), "desktop authorization missing");
                 String query = exchange.getRequestURI().getRawQuery();
-                if (query.contains("action=website-list")) {
-                    reply(exchange, new JSONArray().put(summary(cloudContent.get(), cloudModified.get())).toString());
+                if (query.contains("action=website-sync")) {
+                    snapshotRequests.incrementAndGet();
+                    long after = queryLong(query, "after");
+                    if (after >= cloudRevision.get()) {
+                        reply(exchange, new JSONObject().put("revision", cloudRevision.get())
+                            .put("updatedAt", "2026-08-29T00:00:00Z").put("unchanged", true).put("posts", new JSONArray()).toString());
+                    } else {
+                        JSONObject post = summary(cloudContent.get(), cloudModified.get(), cloudRevision.get()).put("content", cloudContent.get());
+                        reply(exchange, new JSONObject().put("revision", cloudRevision.get())
+                            .put("updatedAt", "2026-08-29T00:00:00Z").put("unchanged", false)
+                            .put("posts", new JSONArray().put(post)).toString());
+                    }
+                } else if (query.contains("action=website-list")) {
+                    reply(exchange, new JSONArray().put(summary(cloudContent.get(), cloudModified.get(), cloudRevision.get())).toString());
                 } else if (query.contains("action=website-read")) {
                     require(queryName(query).equals("测试文章.md"), "post name was not encoded safely");
-                    reply(exchange, summary(cloudContent.get(), cloudModified.get()).put("content", cloudContent.get()).toString());
+                    reply(exchange, summary(cloudContent.get(), cloudModified.get(), cloudRevision.get()).put("content", cloudContent.get()).toString());
                 } else if (query.contains("action=website-save")) {
                     JSONObject body = new JSONObject(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
                     require(body.optInt("revision") == 1, "save revision was not forwarded");
-                    cloudContent.set(body.getString("content")); cloudModified.set(System.currentTimeMillis());
-                    reply(exchange, summary(cloudContent.get(), cloudModified.get()).put("content", cloudContent.get()).put("revision", 2).toString());
+                    cloudContent.set(body.getString("content")); cloudModified.set(System.currentTimeMillis()); cloudRevision.set(2L);
+                    reply(exchange, summary(cloudContent.get(), cloudModified.get(), cloudRevision.get()).put("content", cloudContent.get()).toString());
                 } else reply(exchange, new JSONObject().put("ok", true).toString());
             });
             server.start();
@@ -44,13 +58,15 @@ public final class CloudWebsitePostClientRegressionTest {
             client.syncTo(posts.toFile());
             Path local = posts.resolve("测试文章.md");
             require(Files.readString(local).equals("云端第一版"), "cloud post was not mirrored locally");
+            client.syncTo(posts.toFile());
+            require(snapshotRequests.get() == 2L, "unchanged sync should use one revision request only");
 
             JSONObject saved = client.save("测试文章.md", "云端第二版", 1);
             client.mirrorSavedPost(posts.toFile(), saved);
             require(Files.readString(local).equals("云端第二版"), "saved cloud post was not mirrored locally");
 
             Files.writeString(local, "本机更新版本"); local.toFile().setLastModified(System.currentTimeMillis() + 60_000L);
-            cloudContent.set("较旧云端版本"); cloudModified.set(System.currentTimeMillis());
+            cloudContent.set("较旧云端版本"); cloudModified.set(System.currentTimeMillis()); cloudRevision.set(3L);
             client.syncTo(posts.toFile());
             require(Files.readString(local).equals("本机更新版本"), "newer local edit was overwritten");
             System.out.println("CloudWebsitePostClient regression test passed");
@@ -62,13 +78,20 @@ public final class CloudWebsitePostClientRegressionTest {
         }
     }
 
-    private static JSONObject summary(String content, long modified) {
+    private static JSONObject summary(String content, long modified, long revision) {
         return new JSONObject().put("name", "测试文章.md").put("size", content.getBytes(StandardCharsets.UTF_8).length)
-            .put("modified", modified).put("revision", 1).put("sha256", "test");
+            .put("modified", modified).put("revision", revision).put("sha256", "test");
     }
     private static String queryName(String query) {
         for (String part : query.split("&")) if (part.startsWith("name=")) return URLDecoder.decode(part.substring(5), StandardCharsets.UTF_8);
         return "";
+    }
+    private static long queryLong(String query, String name) {
+        for (String part : query.split("&")) if (part.startsWith(name + "=")) {
+            try { return Long.parseLong(part.substring(name.length() + 1)); }
+            catch (NumberFormatException ignored) { return 0L; }
+        }
+        return 0L;
     }
     private static void reply(HttpExchange exchange, String body) throws java.io.IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8); exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");

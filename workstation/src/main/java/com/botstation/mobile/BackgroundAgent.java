@@ -19,8 +19,8 @@ public final class BackgroundAgent {
     public static int run(BotPaths paths) {
         LogBus log = new LogBus(paths.logs());
         try {
-            Files.createDirectories(paths.config());
-            Path lockPath = paths.config().resolve("background-agent.lock");
+            Path lockPath = lockPath();
+            Files.createDirectories(lockPath.getParent());
             FileChannel channel = FileChannel.open(lockPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
             FileLock lock;
             try { lock = channel.tryLock(); }
@@ -70,6 +70,18 @@ public final class BackgroundAgent {
         } catch (IOException error) {
             log.warn("后台代理", "启动失败：" + safeMessage(error));
         }
+    }
+
+    /** One per Windows user, even when portable and installed launchers coexist. */
+    static Path lockPath() {
+        String configured = System.getProperty("botstation.background.agent.lock", "").trim();
+        if (!configured.isEmpty()) return Path.of(configured).toAbsolutePath().normalize();
+        String local = System.getenv("LOCALAPPDATA");
+        Path base = local == null || local.isBlank()
+            ? Path.of(System.getProperty("user.home"), ".bot-workstation")
+            : Path.of(local);
+        return base.resolve("Teacharm").resolve("BotWorkstation").resolve("background-agent.lock")
+            .toAbsolutePath().normalize();
     }
 
     private static String safeMessage(Throwable error) {

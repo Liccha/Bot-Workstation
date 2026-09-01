@@ -3,7 +3,9 @@ const { getStore } = require('./storage');
 const announcementRepo = require('./repository');
 
 const CURRENT_KEY = 'website/teacharm.moe/posts/current.json';
+const REVISION_KEY = 'website/teacharm.moe/posts/revision.json';
 const MAX_POST_BYTES = 4 * 1024 * 1024;
+let cachedDocument = null;
 
 function now() { return new Date().toISOString(); }
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
@@ -23,10 +25,16 @@ function normalizeContent(value) {
   return content;
 }
 async function readDocument() {
+  const marker = await readRevisionMarker();
+  if (marker && cachedDocument && cachedDocument.revision === marker.revision) {
+    return { document: clone(cachedDocument.document), etag: cachedDocument.etag };
+  }
   const object = await getStore().get(CURRENT_KEY);
   if (!object) return { document: { schema: 1, site: 'teacharm.moe', revision: 0, updatedAt: now(), posts: [] }, etag: null };
   const document = JSON.parse(object.body.toString('utf8'));
   if (!Array.isArray(document.posts)) throw new Error('website post document is invalid');
+  if (!marker || marker.revision !== Number(document.revision || 0)) await writeRevisionMarker(document);
+  cachedDocument = { revision: Number(document.revision || 0), document: clone(document), etag: object.etag };
   return { document, etag: object.etag };
 }
 async function writeDocument(document, audit) {
@@ -35,11 +43,37 @@ async function writeDocument(document, audit) {
   const current = await store.get(CURRENT_KEY);
   if (current) await store.put(`website/teacharm.moe/posts/revisions/${updatedAt.replace(/[:.]/g, '-')}-${crypto.randomUUID()}.json`, current.body);
   const saved = await store.put(CURRENT_KEY, Buffer.from(JSON.stringify(next)));
+  await writeRevisionMarker(next);
+  cachedDocument = { revision: Number(next.revision || 0), document: clone(next), etag: saved.etag };
   await announcementRepo.writeAudit({ ...audit, site: 'teacharm.moe', documentRevision: next.revision });
   return { document: next, etag: saved.etag };
 }
 function metadata(post) {
   return { id: post.id, name: post.name, size: post.size, modified: post.modified, revision: post.revision, sha256: post.sha256 };
+}
+function revisionMarker(document) {
+  const total = Array.isArray(document?.posts)
+    ? document.posts.filter(post => !post.deletedAt).length
+    : Number(document?.total);
+  return {
+    schema: 1,
+    site: 'teacharm.moe',
+    revision: Math.max(0, Number(document?.revision || 0)),
+    updatedAt: String(document?.updatedAt || now()),
+    total: Number.isSafeInteger(total) && total >= 0 ? total : 0
+  };
+}
+async function readRevisionMarker() {
+  const object = await getStore().get(REVISION_KEY);
+  if (!object) return null;
+  const marker = JSON.parse(object.body.toString('utf8'));
+  if (marker?.site !== 'teacharm.moe' || !Number.isSafeInteger(Number(marker.revision)) || Number(marker.revision) < 0) return null;
+  return revisionMarker(marker);
+}
+async function writeRevisionMarker(document) {
+  const marker = revisionMarker(document);
+  await getStore().put(REVISION_KEY, Buffer.from(JSON.stringify(marker)));
+  return marker;
 }
 async function list() {
   const { document } = await readDocument();
@@ -50,6 +84,18 @@ async function read(name) {
   const post = document.posts.find(item => item.name === safeName && !item.deletedAt);
   if (!post) { const error = new Error('post not found'); error.statusCode = 404; throw error; }
   return clone(post);
+}
+async function syncSnapshot(requestedAfter) {
+  const after = Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Number(requestedAfter) || 0));
+  const marker = await readRevisionMarker();
+  if (marker && after >= marker.revision) return { ...marker, unchanged: true, posts: [] };
+  const { document } = await readDocument();
+  const current = revisionMarker(document);
+  return {
+    ...current,
+    unchanged: false,
+    posts: document.posts.filter(post => !post.deletedAt).map(clone)
+  };
 }
 async function save(raw, actor) {
   return announcementRepo.withLock('website-teacharm-posts', async () => {
@@ -80,4 +126,7 @@ async function softDelete(name, expectedRevision, actor) {
   });
 }
 
-module.exports = { CURRENT_KEY, MAX_POST_BYTES, list, read, save, softDelete, readDocument };
+module.exports = {
+  CURRENT_KEY, REVISION_KEY, MAX_POST_BYTES,
+  list, read, save, softDelete, readDocument, syncSnapshot
+};

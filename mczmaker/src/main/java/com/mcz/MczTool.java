@@ -102,6 +102,17 @@ public class MczTool extends JFrame {
     JLabel idHintLabel;
     JLabel albumIdHintLabel;
     XSSFWorkbook currentWorkbook;
+    private volatile CloudSongPublisher cloudSongPublisher;
+
+    /** Optional cloud sink supplied by Bot Workstation. MczMaker stays standalone without it. */
+    public interface CloudSongPublisher {
+        void create(String id, Map<String, String> values, File image, File audio) throws Exception;
+        void update(String id, Map<String, String> values, File image, File audio) throws Exception;
+    }
+
+    public void setCloudSongPublisher(CloudSongPublisher publisher) {
+        this.cloudSongPublisher = publisher;
+    }
 
     public static void main(String[] args) {
         detectFFmpeg();
@@ -796,27 +807,19 @@ public class MczTool extends JFrame {
     // 获取桌面 songs.xlsx 路径（跨用户兼容）
 
     private void startAntiFreezeWatchdog() {
+        final java.util.concurrent.atomic.AtomicBoolean pulsePending =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
         Thread watchdog = new Thread(() -> {
             while (true) {
                 try {
-                    Thread.sleep(2000); // 狗子每 2 秒醒来巡视一次
-
-                    // 尝试向 UI 线程发送心跳包更新时间戳
-                    SwingUtilities.invokeLater(() -> {
+                    Thread.sleep(2000);
+                    if (pulsePending.compareAndSet(false, true)) {
                         lastUIHeartbeat = System.currentTimeMillis();
-                    });
-
-                    // 【核心判定】如果超过 15 秒 UI 都没有回应，说明彻底卡死了
-                    if (System.currentTimeMillis() - lastUIHeartbeat > 15000) {
-                        System.err.println("❌ [致命错误] 检测到界面已失去响应超过15秒！");
-                        SwingUtilities.invokeLater(() -> {
-                            int choice = JOptionPane.showConfirmDialog(MczTool.this,
-                                    "检测到界面长时间无响应（>15秒）\n\n可能是正在处理大文件或图片。\n\n是否强制退出程序？\n（未保存的数据将丢失）",
-                                    "界面卡死警告", JOptionPane.YES_NO_OPTION, JOptionPane.ERROR_MESSAGE);
-                            if (choice == JOptionPane.YES_OPTION) {
-                                System.exit(1);
-                            }
-                        });
+                        SwingUtilities.invokeLater(() -> pulsePending.set(false));
+                    } else if (System.currentTimeMillis() - lastUIHeartbeat > 60000) {
+                        // A watchdog must never interrupt valid image/audio/database work
+                        // or offer a destructive forced exit. Keep diagnostics in logs only.
+                        System.err.println("[UI watchdog] EDT has not processed a pulse for 60 seconds");
                         lastUIHeartbeat = System.currentTimeMillis();
                     }
                 } catch (InterruptedException e) {
@@ -1536,6 +1539,10 @@ public class MczTool extends JFrame {
                                 }
                                 // 同步写回桌面
                                 if (anyChange) {
+                                    if (cloudSongPublisher != null) {
+                                        cloudSongPublisher.update(existId,
+                                                ExcelManager.rowValues(this, existingRow), null, null);
+                                    }
                                     ExcelManager.normalizeRowHeights(this);
                                     File desktopExcel = ExcelManager.getDesktopExcelFile();
                                     try (FileOutputStream fos = new FileOutputStream(desktopExcel)) {
@@ -1650,10 +1657,18 @@ public class MczTool extends JFrame {
                     }
                 }
 
-// 4. 追加写入内存工作簿并同步到桌面
+// 4. 云端优先写入，再追加到内存工作簿和桌面备份
                 boolean writeSuccess = false;
+                String saveFailure = null;
                 try {
                     Sheet sheet = currentWorkbook.getSheetAt(0);
+
+                    if (cloudSongPublisher != null) {
+                        File uploadedImage = destImg.isFile() ? destImg : null;
+                        File uploadedAudio = destAudio.isFile() ? destAudio : null;
+                        cloudSongPublisher.create(cols[0], ExcelManager.rowValues(this, cols),
+                                uploadedImage, uploadedAudio);
+                    }
 
                     // 倒序寻找真正包含数据的最后一行
                     int realLastRow = 0;
@@ -1688,10 +1703,12 @@ public class MczTool extends JFrame {
                     }
                 } catch (Exception ex) {
                     ex.printStackTrace();
+                    saveFailure = ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage();
                 }
 
                 // === UI 最终状态反馈 ===
                 final boolean finalSuccess = writeSuccess;
+                final String finalFailure = saveFailure;
                 SwingUtilities.invokeLater(() -> {
                     if (finalSuccess) {
                         customImageFile = null;
@@ -1700,7 +1717,9 @@ public class MczTool extends JFrame {
                         btn.setEnabled(false); // 任务彻底完成
                         ExcelManager.syncToBot(MczTool.this);
                     } else {
-                        JOptionPane.showMessageDialog(btn.getParent(), "最终写入 Excel 失败，可能是文件被占用！", "错误", JOptionPane.ERROR_MESSAGE);
+                        JOptionPane.showMessageDialog(btn.getParent(),
+                                "保存失败：\n" + (finalFailure == null ? "未能完成写入" : finalFailure),
+                                "保存失败", JOptionPane.ERROR_MESSAGE);
                         btn.setText("写入失败，请重试");
                         btn.setIcon(new EmojiIcon("❌", 18));
                         btn.setEnabled(true);

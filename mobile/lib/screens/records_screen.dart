@@ -309,6 +309,7 @@ class _RecordEditor extends StatefulWidget {
 
 class _RecordEditorState extends State<_RecordEditor> {
   late final Map<String, TextEditingController> fields;
+  late final Map<String, String> initialValues;
   bool saving = false;
 
   @override
@@ -365,6 +366,9 @@ class _RecordEditorState extends State<_RecordEditor> {
       }
     }
     fields = ordered;
+    initialValues = {
+      for (final entry in ordered.entries) entry.key: entry.value.text,
+    };
   }
 
   @override
@@ -378,9 +382,15 @@ class _RecordEditorState extends State<_RecordEditor> {
   Future<void> save() async {
     setState(() => saving = true);
     try {
-      final values = fields.map(
-        (key, controller) => MapEntry(key, controller.text),
-      );
+      final values = <String, String>{
+        for (final entry in fields.entries)
+          if (entry.value.text != initialValues[entry.key])
+            entry.key: entry.value.text,
+      };
+      if (values.isEmpty) {
+        if (mounted) Navigator.pop(context);
+        return;
+      }
       if (widget.type == RecordType.song) {
         final id = widget.item.entries
             .firstWhere((entry) => entry.key.toLowerCase() == 'id')
@@ -394,6 +404,51 @@ class _RecordEditorState extends State<_RecordEditor> {
         if (sidEntry == null) throw const ApiException('这条 Stable 记录缺少 SID');
         await widget.api.updateStable(sidEntry.value.toString(), values);
       }
+      if (mounted) Navigator.pop(context, true);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    } finally {
+      if (mounted) setState(() => saving = false);
+    }
+  }
+
+  Future<void> deleteSong() async {
+    final idEntry = widget.item.entries
+        .where((entry) => entry.key.toLowerCase() == 'id')
+        .firstOrNull;
+    if (idEntry == null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('这首歌曲缺少 ID')));
+      return;
+    }
+    final id = idEntry.value.toString();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('确认删除？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+              foregroundColor: Theme.of(context).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('确认删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => saving = true);
+    try {
+      await widget.api.deleteSong(id);
       if (mounted) Navigator.pop(context, true);
     } catch (error) {
       if (mounted) {
@@ -516,6 +571,19 @@ class _RecordEditorState extends State<_RecordEditor> {
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.error,
+                side: BorderSide(color: Theme.of(context).colorScheme.error),
+              ),
+              onPressed: saving ? null : deleteSong,
+              icon: const Icon(Icons.delete_outline_rounded),
+              label: const Text('删除歌曲并释放 ID'),
+            ),
           ),
           const SizedBox(height: 10),
         ],

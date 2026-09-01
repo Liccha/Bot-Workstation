@@ -2,17 +2,19 @@
 
 一套面向音游社区运营的跨端机器人工作台。项目将 QQ 机器人、谱面制作、歌曲与 Stable 曲库、云公告、网站文章和移动管理整合到同一套系统中，同时保留原有高复杂度谱面参数和数据格式。
 
+当前架构快照更新于 **2026-09-02**：面向国内用户的业务读写已迁移到北京地域云函数与 OSS/CDN，Vercel 主要承载 Editor 静态站及兼容部署。
+
 > 本仓库是经过脱敏的公开版本。真实管理员凭据、群号、数据库、公告附件、歌曲音频、受许可限制的模板和签名密钥均不在仓库中。
 
 ## 项目亮点
 
 - **一站式桌面工作台**：在 Java 桌面端统一管理 SongBot、NapCat、谱面工具、曲库、Stable 数据与运营入口。
-- **跨端管理**：Flutter Android App 首次在局域网用一次性配对码注册可撤销设备账户，之后直接通过受限云数据 API 跨网络查询和修改歌曲/Stable 元数据，不依赖电脑在线。
+- **跨端管理**：Flutter Android App 首次在局域网用一次性配对码注册可撤销设备账户，之后直接通过国内云数据 API 跨网络查询和修改歌曲/Stable 元数据，不依赖电脑在线。
 - **秒级在线状态**：桌面端定期发布只含服务状态的轻量心跳，手机刷新不再投递远程命令；曲库统计异步更新，不阻塞在线检测。
 - **运营开关持久化**：每日歌曲推送与竞猜可由工作站或手机端启停，默认关闭，重启后保持状态且不删除历史数据。
-- **可靠数据写入**：SQLite WAL、CSV 与数据库双写、事务提交、写前备份、失败回滚、空数据防覆盖和非连续 ID 兼容。
-- **低成本查询**：SongBot 启动时仅按云 revision 同步一次 CSV；QQ群 `!ID/关键词` 查询始终命中本机 SQLite，不按消息请求云端资源。
-- **云端公告链路**：Vercel Serverless API + 阿里云 OSS/CDN，支持附件、版本冲突检测、并发锁、任务认领、失败重试和审计记录。
+- **双形态数据访问**：主工作站保留 SQLite/CSV/XLSX 事务写入；没有本地曲库的安装可自动注册受限编辑设备，使用云快照和本机缓存直接工作。
+- **低成本查询**：工作站按云 revision 增量回流数据；QQ群 `!ID/歌名/作者/谱师/别名` 查询始终命中本机 SQLite，不按消息请求云端资源。
+- **国内云数据面**：阿里云函数计算 + OSS/CDN 承载歌曲、Stable、公告、附件、网站文章、移动设备和发布清单；支持签名上传、版本冲突检测、并发锁、任务认领、失败重试和审计记录。
 - **纵深安全边界**：HttpOnly 管理员会话、HMAC 能力令牌、配对限速、请求体限制、路径校验与紧急写入阻断。
 - **可发布交付**：Windows EXE/Setup、签名 Android APK、SHA-256 发布清单和启动前更新检查。
 
@@ -20,19 +22,20 @@
 
 ```mermaid
 flowchart LR
-    Mobile[Flutter Android App] -->|first-time LAN pairing| Workstation[Java Bot 工作站]
-    Mobile -->|revocable device token| MobileAPI[Restricted cloud data API]
-    MobileAPI --> OSS
-    Workstation --> MCZ[MCZ 制作与图片设计]
-    Workstation --> SQLite[(SQLite / WAL)]
-    Workstation --> Stable[XLSX / CSV / Stable]
-    Workstation --> SongBot[SongBot service]
+    Mobile[Flutter Android App] -->|首次 LAN 配对| Workstation[Java Bot 工作站]
+    Mobile -->|长期设备令牌| FC[阿里云函数计算 · 北京]
+    Web[Editor 静态站 · Vercel] -->|公开查询 / 受控管理| FC
+    Portable[无本地曲库的工作站] -->|受限编辑设备| FC
+    Workstation --> MCZ[MCZ 录入与图片设计]
+    Workstation --> Local[(SQLite / CSV / XLSX)]
+    Workstation -->|revision 增量同步| FC
+    Workstation --> SongBot[SongBot 服务]
     SongBot -->|OneBot HTTP| NapCat[NapCat / QQ]
-    Web[Bot Editor Web] --> API[Vercel Serverless API]
-    Workstation -->|authenticated admin API| API
-    SongBot -->|claim / send / ack| API
-    API --> OSS[(Aliyun OSS)]
-    OSS --> CDN[CDN static assets and releases]
+    SongBot -->|claim / send / ack| FC
+    FC -->|元数据、审计、对象锁| OSS[(阿里云 OSS)]
+    Mobile -->|签名上传 / 快照下载| OSS
+    OSS --> CDN[assets.teacharm.moe · 静态资源与发行包]
+    CDN --> Web
 ```
 
 更完整的数据流、并发模型和设计取舍见 [架构说明](docs/ARCHITECTURE.md)；权限边界见 [安全模型](docs/SECURITY_MODEL.md)。
@@ -43,9 +46,9 @@ flowchart LR
 | --- | --- |
 | `mczmaker/` | 谱面录入、Combo/BPM、音频波形、封面与日历图设计 |
 | `songbot/` | QQ 机器人、歌曲查询、Stable、公告执行与数据库服务 |
-| `workstation/` | Java 桌面工作台、进程监管、管理员能力门与首次配对 API |
+| `workstation/` | Java 桌面工作台、进程监管、云/本地双形态仓储、管理员能力门与首次配对 API |
 | `mobile/` | Flutter Android 管理端 |
-| `web/` | Editor 前端、Vercel API、OSS 数据层与 Node 测试 |
+| `web/` | Editor 前端、通用 Node API、阿里云 FC 适配器、Vercel 兼容配置与 Node 测试 |
 | `docs/` | 功能矩阵、设计系统、架构和安全说明 |
 
 ## 技术栈
@@ -53,7 +56,7 @@ flowchart LR
 - Java 11、Swing、FlatLaf、Maven
 - SQLite、Apache POI、JFreeChart
 - Flutter / Dart、Android SDK
-- Node.js 20、Vercel Serverless Functions
+- Node.js 20、阿里云函数计算、Vercel 静态托管/兼容函数
 - 阿里云 OSS/CDN、NapCat / OneBot HTTP
 - JUnit 5、Node Test Runner、Flutter Test、GitHub Actions
 
@@ -77,7 +80,7 @@ npm ci
 npm test
 ```
 
-如需部署，请复制 `.env.example` 到部署平台的环境变量面板，并使用独立的最小权限 RAM 用户。不要在本地文件或前端代码中填写 AccessKey。
+如需部署，请按 `.env.example` 在平台侧配置环境变量，并使用独立的最小权限 RAM 用户。`web/fc/` 将同一组 API handler 适配到阿里云函数计算事件格式；不要在源码或前端中填写 AccessKey。
 
 ### 3. Android App
 
@@ -92,24 +95,25 @@ flutter test test/widget_test.dart
 
 ## 运行数据与素材
 
-公开仓库不附带生产数据。完整运行时需要自行准备：
+公开仓库不附带生产数据。连接已授权的云环境时，歌曲与 Stable 页面可在没有本地数据库/工作簿的设备上使用云快照；要运行机器人、谱面制作和本机进程控制，仍需自行准备：
 
 1. 演示用 SQLite/CSV/XLSX 数据；
 2. 自有或获得授权的歌曲、封面、字体及图片模板；
 3. NapCat/OneBot 本机配置；
-4. OSS、Vercel 与管理员环境变量；
+4. OSS、函数计算、Vercel 与管理员环境变量；
 5. Android 或 Windows 发布签名。
 
 `SONGBOT_DAILY_SONG_DIR` 可覆盖每日歌曲音频目录；未设置时回退到当前用户目录下的 `BotWorkstation/DailySongs`。
 
 ## 可靠性设计
 
-- 数据库编辑使用事务，写入失败执行回滚。
-- 歌曲编辑同时原子更新 CSV 与 SQLite，避免机器人重启导入 CSV 后覆盖刚保存的修改。
+- 本地数据库编辑使用事务，并原子更新 CSV 与 SQLite；云端编辑使用 revision、对象锁和幂等确认。
+- 云端变更以增量事件回流主工作站；启动或同步失败时继续使用最后一份有效本地数据，不用空结果覆盖曲库。
+- 云读取优先比较轻量 revision，版本未变直接复用缓存；分页 API 失败时回退到 gzip 快照，再回退到本机缓存。
 - 图片和音频上传使用设备隔离的签名地址，服务端复核类型、大小、对象归属和歌曲 ID 后转入持久资源区；设备令牌不能取得 OSS AccessKey。
 - Stable 保存前同时备份 XLSX 与 CSV，任何一步失败恢复旧文件。
 - 公告保存使用 revision/CAS 语义，避免多人覆盖；发送使用带过期时间的 claim token，避免重复消费。
-- 删除采用归档/软删除，关键云端写入受紧急锁控制；策略不可读取时按 fail-closed 处理。
+- 删除歌曲会释放 ID，并清理该 ID 所属的云端/本地图片与音频；公告与文章保留修订历史。关键云端写入受紧急锁控制，策略不可读取时按 fail-closed 处理。
 - 自动更新清单校验 HTTPS 域名、路径、版本、大小和 SHA-256。
 
 ## 安全与隐私

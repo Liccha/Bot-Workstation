@@ -4,10 +4,18 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
+const String domesticCloudHost =
+    'songbotstic-api-cwpfgfkkpj.cn-beijing.fcapp.run';
+const Set<String> _legacyCloudHosts = {
+  'editor.teacharm.moe',
+  'bot-editor.vercel.app',
+};
+
 class ApiException implements Exception {
-  const ApiException(this.message, {this.statusCode});
+  const ApiException(this.message, {this.statusCode, this.code});
   final String message;
   final int? statusCode;
+  final String? code;
   @override
   String toString() => message;
 }
@@ -53,9 +61,16 @@ class WorkstationApi {
         uri.scheme == 'https' &&
         {'/api/mobile-relay', '/api/mobile-data'}.contains(uri.path) &&
         !uri.hasPort &&
-        {'editor.teacharm.moe', 'bot-editor.vercel.app'}.contains(host);
+        ({domesticCloudHost, ..._legacyCloudHosts}.contains(host));
     if (trustedRelay) {
-      return Uri(scheme: 'https', host: host, path: uri.path).toString();
+      final normalizedHost = _legacyCloudHosts.contains(host)
+          ? domesticCloudHost
+          : host;
+      return Uri(
+        scheme: 'https',
+        host: normalizedHost,
+        path: uri.path,
+      ).toString();
     }
     final local =
         host == 'localhost' ||
@@ -172,11 +187,22 @@ class WorkstationApi {
     if (offset < 0 || limit < 1 || limit > 200) {
       throw const ApiException('分页参数异常');
     }
-    final data = await _send(
-      'GET',
-      path,
-      query: {'q': query, 'offset': '$offset', 'limit': '$limit'},
-    );
+    Map<String, dynamic> data;
+    try {
+      data = await _send(
+        'GET',
+        path,
+        query: {'q': query, 'offset': '$offset', 'limit': '$limit'},
+      );
+    } on ApiException catch (error) {
+      if (!_remoteCloud || !_serverMutationFailure(error)) rethrow;
+      data = await _snapshotPage(
+        path == '/api/songs' ? 'songs' : 'stable',
+        query,
+        offset,
+        limit,
+      );
+    }
     final items = _items(data);
     final total = int.tryParse('${data['total'] ?? ''}') ?? items.length;
     final nextOffset =
@@ -189,6 +215,80 @@ class WorkstationApi {
       nextOffset: nextOffset,
       hasMore: hasMore,
     );
+  }
+
+  Future<Map<String, dynamic>> _snapshotPage(
+    String dataset,
+    String query,
+    int offset,
+    int limit,
+  ) async {
+    final ticket = await _direct(
+      'GET',
+      Uri.parse(server).replace(
+        queryParameters: {'action': 'snapshot-ticket', 'dataset': dataset},
+      ),
+      timeout: const Duration(seconds: 15),
+    );
+    if (ticket['dataset'] != dataset || ticket['encoding'] != 'gzip-json') {
+      throw const ApiException('云端曲库快照凭证无效');
+    }
+    final url = Uri.tryParse('${ticket['url'] ?? ''}');
+    final expected = '/mobile-library/$dataset/current.json.gz';
+    if (url == null ||
+        url.scheme != 'https' ||
+        !url.host.toLowerCase().endsWith('.aliyuncs.com') ||
+        !url.path.endsWith(expected) ||
+        url.userInfo.isNotEmpty) {
+      throw const ApiException('云端曲库快照地址无效');
+    }
+    final response = await _client
+        .get(url)
+        .timeout(const Duration(seconds: 30));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ApiException(
+        '云端曲库快照下载失败（${response.statusCode}）',
+        statusCode: response.statusCode,
+      );
+    }
+    if (response.bodyBytes.length > 8 * 1024 * 1024) {
+      throw const ApiException('云端曲库压缩快照过大');
+    }
+    Map<String, dynamic> document;
+    try {
+      final decoded = gzip.decode(response.bodyBytes);
+      if (decoded.length > 32 * 1024 * 1024) {
+        throw const FormatException('snapshot too large');
+      }
+      document = Map<String, dynamic>.from(
+        jsonDecode(utf8.decode(decoded)) as Map,
+      );
+    } catch (_) {
+      throw const ApiException('云端曲库快照格式无效');
+    }
+    if ('${document['dataset'] ?? dataset}' != dataset) {
+      throw const ApiException('云端曲库快照类型不匹配');
+    }
+    final needle = query.trim().toLowerCase();
+    final all = _items(document);
+    final filtered = needle.isEmpty
+        ? all
+        : all
+              .where(
+                (row) => row.values.any(
+                  (value) => '$value'.toLowerCase().contains(needle),
+                ),
+              )
+              .toList();
+    final start = offset.clamp(0, filtered.length);
+    final end = (start + limit).clamp(start, filtered.length);
+    return {
+      'revision': document['revision'] ?? 0,
+      'items': filtered.sublist(start, end),
+      'total': filtered.length,
+      'nextOffset': end,
+      'hasMore': end < filtered.length,
+    };
   }
 
   Future<List<Map<String, dynamic>>> songs(String query) async {
@@ -219,8 +319,26 @@ class WorkstationApi {
     throw const ApiException('Stable 分页数量异常，已停止继续读取');
   }
 
-  Future<void> updateSong(String id, Map<String, String> values) =>
-      _send('POST', '/api/song', body: {'id': id, 'values': values});
+  Future<void> updateSong(String id, Map<String, String> values) async {
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        await _send('POST', '/api/song', body: {'id': id, 'values': values});
+        return;
+      } on ApiException catch (error) {
+        if (await _songWriteWasCommitted(id, values, error)) return;
+        if (!_serverMutationFailure(error) || attempt > 0) rethrow;
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      }
+    }
+  }
+
+  Future<void> deleteSong(String id) async {
+    try {
+      await _send('POST', '/api/song-delete', body: {'id': id});
+    } on ApiException catch (error) {
+      if (!await _songDeleteWasCommitted(id, error)) rethrow;
+    }
+  }
 
   Future<void> updateStable(String sid, Map<String, String> values) =>
       _send('POST', '/api/stable', body: {'sid': sid, 'values': values});
@@ -361,6 +479,7 @@ class WorkstationApi {
       'GET /api/songs': 'songs',
       'GET /api/stable': 'stable',
       'POST /api/song': 'song',
+      'POST /api/song-delete': 'song-delete',
       'POST /api/stable': 'stable',
       'POST /api/song-asset': 'song-asset',
     };
@@ -374,6 +493,96 @@ class WorkstationApi {
       body: body,
       timeout: timeout ?? Duration(seconds: method == 'POST' ? 30 : 15),
     );
+  }
+
+  Future<bool> _songWriteWasCommitted(
+    String id,
+    Map<String, String> values,
+    ApiException error,
+  ) async {
+    if (!_uncertainMutation(error)) return false;
+    final song = await _findSongAfterUncertainWrite(
+      id,
+      attempts: _serverMutationFailure(error) ? 1 : 3,
+    );
+    if (song == null) return false;
+    for (final entry in values.entries) {
+      final actualKey = song.keys
+          .where((key) => key.toLowerCase() == entry.key.toLowerCase())
+          .firstOrNull;
+      if (actualKey == null || '${song[actualKey] ?? ''}' != entry.value) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  Future<bool> _songDeleteWasCommitted(String id, ApiException error) async {
+    if (!_uncertainMutation(error)) return false;
+    try {
+      return await _findSongAfterUncertainWrite(
+            id,
+            attempts: _serverMutationFailure(error) ? 1 : 3,
+            failClosed: true,
+          ) ==
+          null;
+    } on ApiException {
+      return false;
+    }
+  }
+
+  bool _uncertainMutation(ApiException error) =>
+      _serverMutationFailure(error) ||
+      error.message.contains('超时') ||
+      error.message.contains('连接暂时不可用') ||
+      error.message.contains('无法连接云端');
+
+  bool _serverMutationFailure(ApiException error) =>
+      error.statusCode != null &&
+      error.statusCode! >= 500 &&
+      error.statusCode! < 600;
+
+  Future<Map<String, dynamic>?> _findSongAfterUncertainWrite(
+    String id, {
+    int attempts = 3,
+    bool failClosed = false,
+  }) async {
+    for (var attempt = 0; attempt < attempts; attempt++) {
+      if (attempt > 0) {
+        await Future<void>.delayed(Duration(milliseconds: 400 * attempt));
+      }
+      try {
+        if (_remoteCloud) {
+          try {
+            return await _direct(
+              'GET',
+              Uri.parse(server)
+                  .replace(queryParameters: {'action': 'song-item', 'id': id}),
+              timeout: const Duration(seconds: 15),
+            );
+          } on ApiException catch (error) {
+            if (error.statusCode == 404) return null;
+            if (error.statusCode != 400 && error.statusCode != 405) rethrow;
+          }
+        }
+        final page = await songPage(id, offset: 0, limit: 100);
+        for (final item in page.items) {
+          final idKey = item.keys
+              .where((key) => key.toLowerCase() == 'id')
+              .firstOrNull;
+          if (idKey != null && '${item[idKey] ?? ''}'.trim() == id.trim()) {
+            return item;
+          }
+        }
+        return null;
+      } on ApiException {
+        if (attempt == attempts - 1) {
+          if (failClosed) rethrow;
+          return null;
+        }
+      }
+    }
+    return null;
   }
 
   Future<Map<String, dynamic>> _sendRemote(
@@ -419,6 +628,7 @@ class WorkstationApi {
         throw ApiException(
           value['error']?.toString() ?? '工作站操作失败（$status）',
           statusCode: status,
+          code: value['code']?.toString(),
         );
       }
       return value;
@@ -459,6 +669,7 @@ class WorkstationApi {
       throw ApiException(
         value['error']?.toString() ?? '请求失败（${response.statusCode}）',
         statusCode: response.statusCode,
+        code: value['code']?.toString(),
       );
     }
     return value;

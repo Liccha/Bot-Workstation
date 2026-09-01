@@ -67,8 +67,6 @@ final class SelfTest {
 
     private static boolean validateAdminBoundary(BotPaths paths) {
         try {
-            if (!Files.isRegularFile(paths.songBot.resolve("admin_password.txt"))
-                || Files.size(paths.songBot.resolve("admin_password.txt")) == 0) return false;
             for (Constructor<?> constructor : AdminGate.AdminSession.class.getDeclaredConstructors()) {
                 if (Modifier.isPublic(constructor.getModifiers()) || Modifier.isProtected(constructor.getModifiers())) return false;
             }
@@ -112,6 +110,7 @@ final class SelfTest {
             String repository = Files.readString(paths.songBot.resolve("deploy/api/_lib/repository.js"), StandardCharsets.UTF_8);
             Class.forName("com.botstation.security.AdminIpTrustClient");
             return api.contains("desktop-ip-check") && api.contains("desktop-ip-grant")
+                && api.contains("workstation-admin-check") && api.contains("workstation-admin-grant")
                 && security.contains("x-vercel-forwarded-for") && security.contains("ipFingerprint")
                 && repository.contains("security/admin-ips.json") && repository.contains("trustedIpAllowed");
         } catch (Exception error) { error.printStackTrace(); return false; }

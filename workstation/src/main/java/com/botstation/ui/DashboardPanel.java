@@ -6,6 +6,7 @@ import com.botstation.core.NapCatConfigService;
 import com.botstation.core.ProcessSupervisor;
 import com.botstation.core.ServiceState;
 import com.botstation.core.TaskRunner;
+import com.botstation.features.OperationsSettings;
 
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -37,10 +38,12 @@ final class DashboardPanel extends JPanel {
     private final TaskRunner tasks;
     private final ProcessSupervisor services;
     private final NapCatConfigService napCatConfig;
+    private final OperationsSettings operations;
     private final LogBus log;
     private final Timer refreshTimer;
     private final ServiceCard songBot = new ServiceCard("SongBot", "群消息、公告调度、猜歌与接口服务 · 8080");
     private final ServiceCard napCat = new ServiceCard("NapCat", "正在读取连接参数…");
+    private final ServiceCard dailyAutomation = new ServiceCard("每日歌曲竞猜", "两群每日推荐、竞猜与自动榜单结算");
     private final AtomicBoolean refreshing = new AtomicBoolean();
     private final AtomicBoolean stopped = new AtomicBoolean();
 
@@ -50,6 +53,7 @@ final class DashboardPanel extends JPanel {
         super(new BorderLayout(0, 16));
         this.tasks = tasks; this.services = services; this.log = log;
         this.napCatConfig = new NapCatConfigService(paths);
+        this.operations = new OperationsSettings(paths.songBot);
         setOpaque(false);
         setBorder(javax.swing.BorderFactory.createEmptyBorder(28, 28, 20, 28));
 
@@ -59,8 +63,8 @@ final class DashboardPanel extends JPanel {
 
         ScrollablePanel content = new ScrollablePanel();
         content.setOpaque(false); content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
-        JPanel cards = new JPanel(new GridLayout(1, 2, 12, 0));
-        cards.setOpaque(false); cards.add(songBot); cards.add(napCat);
+        JPanel cards = new JPanel(new GridLayout(1, 3, 12, 0));
+        cards.setOpaque(false); cards.add(songBot); cards.add(napCat); cards.add(dailyAutomation);
         cards.setMinimumSize(new Dimension(200, 144));
         cards.setPreferredSize(new Dimension(200, 144));
         cards.setMaximumSize(new Dimension(Integer.MAX_VALUE, 144));
@@ -88,6 +92,9 @@ final class DashboardPanel extends JPanel {
 
         bind(songBot, services::startSongBot, services::stopSongBot, "SongBot");
         bind(napCat, services::startNapCat, services::stopNapCat, "NapCat");
+        bind(dailyAutomation,
+            () -> operations.setDailyAutomationEnabled(true),
+            () -> operations.setDailyAutomationEnabled(false), "每日歌曲竞猜");
         JButton napCatSettings = UiKit.button("连接设置");
         napCatSettings.addActionListener(event -> NapCatConfigDialog.show(this, napCatConfig, this::refreshNapCatDescription));
         napCat.addAction(napCatSettings);
@@ -183,8 +190,12 @@ final class DashboardPanel extends JPanel {
     private void refresh() {
         if (stopped.get()) return;
         if (!refreshing.compareAndSet(false, true)) return;
-        tasks.run(() -> new ServiceState[]{services.songBotState(), services.napCatState()}, values -> {
-            songBot.setState(values[0]); napCat.setState(values[1]); refreshNapCatDescription(); refreshing.set(false);
+        tasks.run(() -> new DashboardState(services.songBotState(), services.napCatState(),
+            operations.dailyAutomationEnabled()), value -> {
+            songBot.setState(value.songBot);
+            napCat.setState(value.napCat);
+            dailyAutomation.setState(value.dailyAutomation ? ServiceState.RUNNING : ServiceState.STOPPED);
+            refreshNapCatDescription(); refreshing.set(false);
         }, error -> { refreshing.set(false); log.warn("状态检测", error.getMessage()); });
     }
 
@@ -194,6 +205,17 @@ final class DashboardPanel extends JPanel {
     }
 
     @FunctionalInterface private interface CheckedAction { void run() throws Exception; }
+
+    private static final class DashboardState {
+        final ServiceState songBot;
+        final ServiceState napCat;
+        final boolean dailyAutomation;
+        DashboardState(ServiceState songBot, ServiceState napCat, boolean dailyAutomation) {
+            this.songBot = songBot;
+            this.napCat = napCat;
+            this.dailyAutomation = dailyAutomation;
+        }
+    }
 
     void stopRefresh() { stopped.set(true); refreshTimer.stop(); }
 

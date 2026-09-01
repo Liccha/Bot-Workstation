@@ -77,6 +77,19 @@ public final class UiLayoutRegressionTest {
 
             List<JLabel> labels = new ArrayList<>();
             collect(dashboard, JLabel.class, labels);
+            require(labels.stream().anyMatch(item -> "SongBot".equals(item.getText())),
+                "dashboard lost the SongBot service card");
+            require(labels.stream().anyMatch(item -> "NapCat".equals(item.getText())),
+                "dashboard lost the NapCat service card");
+
+            List<JButton> buttons = new ArrayList<>();
+            collect(dashboard, JButton.class, buttons);
+            require(buttons.stream().filter(item -> "启用".equals(item.getText())).count() >= 2,
+                "dashboard lost one or more service start controls");
+            require(buttons.stream().filter(item -> "停用".equals(item.getText())).count() >= 2,
+                "dashboard lost one or more service stop controls");
+            require(buttons.stream().anyMatch(item -> "连接设置".equals(item.getText())),
+                "dashboard lost the NapCat connection settings control");
             for (String expected : new String[]{
                 "谱面、Combo、音频、波形、封面与日历模板。",
                 "查询和修改 SongBot 歌曲元数据。",
