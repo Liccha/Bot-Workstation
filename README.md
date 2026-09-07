@@ -8,8 +8,8 @@
 
 ## 下载隔离体验版
 
-- [Windows 免安装客户端](https://github.com/Liccha/Bot-Workstation/releases/download/demo-v1.1.13-2/BotWorkstation-Demo-Windows.zip)：解压后运行 `BotWorkstationDemo.exe`。
-- [Android App](https://github.com/Liccha/Bot-Workstation/releases/download/demo-v1.1.13-2/BotWorkstation-Demo-Android.apk)：使用独立应用 ID，可与正式版并存；首次启动自动领取临时体验令牌。
+- [Windows 免安装客户端](https://github.com/Liccha/Bot-Workstation/releases/download/demo-v1.1.13-3/BotWorkstation-Demo-Windows.zip)：解压后运行 `BotWorkstationDemo.exe`。
+- [Android App](https://github.com/Liccha/Bot-Workstation/releases/download/demo-v1.1.13-3/BotWorkstation-Demo-Android.apk)：使用独立应用 ID，可与正式版并存；首次启动自动领取临时体验令牌。
 
 两端的歌曲与 Stable 修改只作用于共享的演示副本。维护者关闭体验写权限后，无需重新发布或卸载客户端。
 

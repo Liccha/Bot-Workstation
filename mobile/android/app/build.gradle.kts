@@ -1,18 +1,7 @@
-import java.io.FileInputStream
-import java.util.Properties
-
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
-}
-
-val signingProperties = Properties()
-val signingPropertiesFile = file(
-    System.getProperty("user.home") + "/.bot-workstation/mobile-signing.properties",
-)
-if (signingPropertiesFile.isFile) {
-    FileInputStream(signingPropertiesFile).use(signingProperties::load)
 }
 
 android {
@@ -39,22 +28,6 @@ android {
         versionName = flutter.versionName
     }
 
-    signingConfigs {
-        if (signingPropertiesFile.isFile) create("release") {
-            storeFile = file(signingProperties.getProperty("storeFile"))
-            storePassword = signingProperties.getProperty("storePassword")
-            keyAlias = signingProperties.getProperty("keyAlias")
-            keyPassword = signingProperties.getProperty("keyPassword")
-        }
-    }
-
-    buildTypes {
-        release {
-            if (signingPropertiesFile.isFile) {
-                signingConfig = signingConfigs.getByName("release")
-            }
-        }
-    }
 }
 
 kotlin {

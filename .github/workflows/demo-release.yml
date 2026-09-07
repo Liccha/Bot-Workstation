@@ -49,7 +49,17 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test test/widget_test.dart
-      - run: flutter build apk --debug --build-name 1.1.13 --build-number 21
+      - name: Build installable demo APK
+        shell: bash
+        run: |
+          set -o pipefail
+          flutter build apk --debug --build-name 1.1.13 --build-number 21 2>&1 | tee apk-build.log
+      - name: Report APK build failure
+        if: failure()
+        shell: bash
+        run: |
+          message=$(tail -n 40 apk-build.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')
+          echo "::error title=Flutter APK build failed::$message"
       - run: mv build/app/outputs/flutter-apk/app-debug.apk ../BotWorkstation-Demo-Android.apk
       - uses: actions/upload-artifact@v4
         with:
