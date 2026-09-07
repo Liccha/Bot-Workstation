@@ -52,7 +52,7 @@ void main() {
       throw StateError('unexpected request: ${request.url}');
     });
     final api = WorkstationApi(
-      'https://portfolio.invalid/api/mobile-data',
+      'https://songbotdemo-api-hxhuxsgwar.cn-beijing.fcapp.run/api/mobile-data',
       token: 'device-token',
       client: client,
     );

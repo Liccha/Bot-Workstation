@@ -18,7 +18,7 @@ class DashboardScreen extends StatelessWidget {
           _CloudCard(controller: controller),
           const SizedBox(height: 14),
         ],
-        _ServiceCard(
+        if (!controller.portfolioDemo) _ServiceCard(
           name: 'SongBot',
           detail: controller.cloudIndependent
               ? '群消息、公告调度、猜歌与接口服务 · 由常驻后台代理控制'
@@ -28,8 +28,8 @@ class DashboardScreen extends StatelessWidget {
           onStart: () => _run(context, controller.action('songbot.start')),
           onStop: () => _run(context, controller.action('songbot.stop')),
         ),
-        const SizedBox(height: 14),
-        _ServiceCard(
+        if (!controller.portfolioDemo) const SizedBox(height: 14),
+        if (!controller.portfolioDemo) _ServiceCard(
           name: 'NapCat',
           detail: controller.cloudIndependent
               ? 'QQ 连接与 OneBot 消息通道 · 由常驻后台代理控制'
@@ -39,8 +39,8 @@ class DashboardScreen extends StatelessWidget {
           onStart: () => _run(context, controller.action('napcat.start')),
           onStop: () => _run(context, controller.action('napcat.stop')),
         ),
-        const SizedBox(height: 14),
-        _AutomationCard(controller: controller),
+        if (!controller.portfolioDemo) const SizedBox(height: 14),
+        if (!controller.portfolioDemo) _AutomationCard(controller: controller),
       ],
     ),
   );
@@ -112,7 +112,7 @@ class _CloudCard extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    '云端独立运行',
+                    controller.portfolioDemo ? '隔离体验环境' : '云端独立运行',
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                 ),

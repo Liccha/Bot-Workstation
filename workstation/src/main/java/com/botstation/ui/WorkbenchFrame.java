@@ -62,7 +62,7 @@ public final class WorkbenchFrame extends JFrame {
     private boolean adminAuthorizationPending;
 
     public WorkbenchFrame(BotPaths paths, LogBus log, TaskRunner tasks, ProcessSupervisor services) {
-        super("Bot 工作站");
+        super("Bot 工作站 · 隔离体验版");
         this.paths = paths;
         this.log = log;
         this.tasks = tasks;
@@ -248,7 +248,7 @@ public final class WorkbenchFrame extends JFrame {
         current = key;
         cards.show(content, key);
         PageTransition.play(page.component);
-        setTitle(page.label + " · Bot 工作站");
+        setTitle(page.label + " · Bot 工作站隔离体验版");
         for (NavButton button : navButtons) button.setSelectedState(button.page.key.equals(key));
     }
 

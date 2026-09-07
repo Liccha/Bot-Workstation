@@ -35,11 +35,15 @@ function isRuntimeSource(relative) {
 }
 
 const failures = [];
-const requiredReadOnlyGuards = [
-  ['workstation/src/main/java/com/botstation/BotStationApp.java', /portfolioSnapshot\(\)/],
+const requiredDistributionGuards = [
+  ['workstation/src/main/java/com/botstation/core/CloudEndpoints.java', /songbotdemo-api-hxhuxsgwar\.cn-beijing\.fcapp\.run/],
+  ['workstation/src/main/java/com/botstation/core/BotPaths.java', /BotWorkstationDemo/],
   ['mczmaker/src/main/java/com/mcz/MczTool.java', /portfolioSnapshot\(\)/],
   ['songbot/src/main/java/com/mybot/SongBot.java', /portfolioSnapshot\(\)/],
-  ['mobile/lib/main.dart', /_portfolioSnapshot\(\)/],
+  ['mobile/lib/core/api_client.dart', /songbotdemo-api-hxhuxsgwar\.cn-beijing\.fcapp\.run/],
+  ['mobile/android/app/build.gradle.kts', /moe\.teacharm\.bot_workstation_demo/],
+  ['workstation/src/main/java/com/botstation/core/UpdateService.java', /portfolio\.invalid/],
+  ['mobile/lib/core/mobile_update_service.dart', /portfolio\.invalid/],
   ['web/index.html', /PORTFOLIO_READ_ONLY=true/],
   ['web/api/_lib/showcase-policy.js', /portfolio showcase is read-only/],
 ];
@@ -71,10 +75,10 @@ function visit(directory) {
 }
 
 visit(root);
-for (const [relative, pattern] of requiredReadOnlyGuards) {
+for (const [relative, pattern] of requiredDistributionGuards) {
   const full = path.join(root, relative);
   if (!fs.existsSync(full) || !pattern.test(fs.readFileSync(full, 'utf8'))) {
-    failures.push(`${relative}: missing portfolio read-only guard`);
+    failures.push(`${relative}: missing portfolio distribution guard`);
   }
 }
 if (failures.length) {

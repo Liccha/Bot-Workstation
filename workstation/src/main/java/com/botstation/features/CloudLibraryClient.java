@@ -455,7 +455,9 @@ final class CloudLibraryClient {
     private static JSONObject withoutStatus(JSONObject value) { value.remove("_httpStatus"); return value; }
     private static IOException responseError(int status, JSONObject value) {
         String error = value.optString("error", "请求失败");
-        if (status == 423) error = "云端写入已被管理员紧急暂停";
+        if (status == 423 && "demo_closed".equals(value.optString("code", "")))
+            error = "体验版修改权限已结束";
+        else if (status == 423) error = "云端写入已被管理员紧急暂停";
         else if (status == 429) error = "操作过于频繁，请稍后再试";
         else if (status == 401) error = "设备授权已失效";
         else if (status == 409 && "record_exists".equals(value.optString("code", "")))

@@ -2,7 +2,7 @@
 
 ## Supported scope
 
-This repository is a sanitized, read-only public portfolio snapshot. It is not a client distribution. Runtime defaults use non-routable endpoints, production update feeds are absent, and API mutations are denied unless an isolated test process explicitly enables test writes. Security reports should focus on authentication bypasses, unauthorized cloud writes, path traversal, token leakage, update integrity, and destructive data handling.
+This repository is a sanitized portfolio snapshot and a temporary isolated demo-client distribution. Desktop and Android builds are pinned to a dedicated demo function and object prefix; they cannot select a production host. The portfolio website stays read-only, production update feeds are absent, and demo mutations require short-lived tokens plus a server-side enable/expiry gate. Security reports should focus on authentication bypasses, escaping the demo prefix, unauthorized production access, path traversal, token leakage, update integrity, and destructive data handling.
 
 ## Reporting
 
@@ -24,3 +24,14 @@ Do not publish credentials, production identifiers, user data, database dumps, r
 ## Out of scope
 
 The licensed fonts, songs, production databases, group identifiers, administrator device list and live cloud configuration are intentionally absent from this repository.
+
+## Demo shutdown
+
+The repository owner can close demo writes without releasing new clients:
+
+```bash
+cd web
+npm run demo:access -- --env <private-env-file> --endpoint https://songbotdemo-api-hxhuxsgwar.cn-beijing.fcapp.run --enabled false
+```
+
+The control request requires the private desktop-management token. Never commit that environment file or token.

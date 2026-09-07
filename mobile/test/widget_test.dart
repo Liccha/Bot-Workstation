@@ -46,10 +46,10 @@ void main() {
       }
     });
 
-    test('accepts only the non-routable portfolio cloud placeholder', () {
+    test('accepts only the isolated portfolio demo cloud host', () {
       expect(
         WorkstationApi.normalizeServer(
-          'https://portfolio.invalid/api/mobile-relay',
+          'https://songbotdemo-api-hxhuxsgwar.cn-beijing.fcapp.run/api/mobile-relay',
         ),
         'https://$domesticCloudHost/api/mobile-relay',
       );
@@ -61,7 +61,7 @@ void main() {
       );
       expect(
         () => WorkstationApi.normalizeServer(
-          'https://portfolio.invalid/api/announcement-cloud',
+          'https://songbotdemo-api-hxhuxsgwar.cn-beijing.fcapp.run/api/announcement-cloud',
         ),
         throwsA(isA<ApiException>()),
       );
@@ -71,7 +71,7 @@ void main() {
   test('long-term device token relays a request without LAN access', () async {
     final requests = <http.Request>[];
     final api = WorkstationApi(
-      'https://portfolio.invalid/api/mobile-relay',
+      'https://songbotdemo-api-hxhuxsgwar.cn-beijing.fcapp.run/api/mobile-relay',
       token: 'device-id.device-secret',
       client: MockClient((request) async {
         requests.add(request);
@@ -96,7 +96,7 @@ void main() {
   test('cloud-independent account can relay service controls to the resident agent', () async {
     final requests = <http.Request>[];
     final api = WorkstationApi(
-      'https://portfolio.invalid/api/mobile-data',
+      'https://songbotdemo-api-hxhuxsgwar.cn-beijing.fcapp.run/api/mobile-data',
       token: 'device-id.device-secret',
       client: MockClient((request) async {
         requests.add(request);
@@ -123,7 +123,7 @@ void main() {
     final requests = <http.Request>[];
     final controller = AppController(_EmptySessionStore())
       ..api = WorkstationApi(
-        'https://portfolio.invalid/api/mobile-data',
+        'https://songbotdemo-api-hxhuxsgwar.cn-beijing.fcapp.run/api/mobile-data',
         token: 'device-id.device-secret',
         client: MockClient((request) async {
           requests.add(request);
@@ -231,7 +231,7 @@ void main() {
   ) async {
     final controller = AppController(_EmptySessionStore())
       ..api = WorkstationApi(
-        'https://portfolio.invalid/api/mobile-data',
+        'https://songbotdemo-api-hxhuxsgwar.cn-beijing.fcapp.run/api/mobile-data',
         token: 'device-id.device-secret',
       )
       ..status = {
@@ -315,7 +315,7 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       final requests = <http.Request>[];
       final api = WorkstationApi(
-        'https://portfolio.invalid/api/mobile-data',
+        'https://songbotdemo-api-hxhuxsgwar.cn-beijing.fcapp.run/api/mobile-data',
         token: 'device-id.device-secret',
         client: MockClient((request) async {
           requests.add(request);

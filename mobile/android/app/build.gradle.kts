@@ -26,7 +26,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "moe.teacharm.bot_workstation_mobile"
+        applicationId = "moe.teacharm.bot_workstation_demo"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -40,10 +40,7 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            check(signingPropertiesFile.isFile) {
-                "Missing private mobile signing configuration: $signingPropertiesFile"
-            }
+        if (signingPropertiesFile.isFile) create("release") {
             storeFile = file(signingProperties.getProperty("storeFile"))
             storePassword = signingProperties.getProperty("storePassword")
             keyAlias = signingProperties.getProperty("keyAlias")
@@ -53,7 +50,9 @@ android {
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("release")
+            if (signingPropertiesFile.isFile) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 }

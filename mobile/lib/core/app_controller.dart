@@ -7,8 +7,11 @@ import 'mobile_update_service.dart';
 import 'session_store.dart';
 
 class AppController extends ChangeNotifier {
-  AppController(this._store, {MobileUpdateService? mobileUpdates})
-    : mobileUpdates = mobileUpdates ?? MobileUpdateService();
+  AppController(
+    this._store, {
+    MobileUpdateService? mobileUpdates,
+    this.demoAutoConnect = false,
+  }) : mobileUpdates = mobileUpdates ?? MobileUpdateService();
   final SessionStore _store;
   WorkstationApi? api;
   bool booting = true;
@@ -18,10 +21,12 @@ class AppController extends ChangeNotifier {
   String? lastError;
   MobileRelease? mobileRelease;
   final MobileUpdateService mobileUpdates;
+  final bool demoAutoConnect;
 
   bool get connected => api != null;
   bool get cloudIndependent =>
       api != null && Uri.parse(api!.server).path == '/api/mobile-data';
+  bool get portfolioDemo => api?.portfolioDemo == true;
 
   Future<void> restore() async {
     checkMobileUpdate();
@@ -49,6 +54,14 @@ class AppController extends ChangeNotifier {
         } catch (error) {
           lastError = error.toString();
         }
+      } else if (demoAutoConnect) {
+        final demo = WorkstationApi(
+          'https://$domesticCloudHost/api/mobile-data',
+        );
+        await demo.enrollDemo();
+        await _store.save(demo.server, demo.token!);
+        api = demo;
+        await refresh();
       }
     } catch (error) {
       lastError = error.toString();
@@ -108,6 +121,11 @@ class AppController extends ChangeNotifier {
   Future<void> refresh() async {
     final current = api;
     if (current == null) return;
+    if (portfolioDemo) {
+      status = await current.status();
+      notifyListeners();
+      return;
+    }
     if (cloudIndependent) {
       final liveStatus = await current
           .serviceStatus()

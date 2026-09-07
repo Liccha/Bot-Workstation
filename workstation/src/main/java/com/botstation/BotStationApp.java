@@ -17,10 +17,6 @@ public final class BotStationApp {
     private BotStationApp() {}
 
     public static void main(String[] args) {
-        if (portfolioSnapshot()) {
-            System.err.println("Bot 工作站公开仓库仅用于只读作品集展示，不提供可运行的运营客户端。");
-            return;
-        }
         if (hasArg(args, "--background-agent")) {
             System.setProperty("file.encoding", StandardCharsets.UTF_8.name());
             System.exit(BackgroundAgent.run(BotPaths.detect()));
@@ -87,6 +83,4 @@ public final class BotStationApp {
         for (String arg : args) if (expected.equalsIgnoreCase(arg)) return true;
         return false;
     }
-
-    private static boolean portfolioSnapshot() { return true; }
 }

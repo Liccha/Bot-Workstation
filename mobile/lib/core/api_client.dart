@@ -1,11 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:http/http.dart' as http;
 
 const String domesticCloudHost =
-    'portfolio.invalid';
+    'songbotdemo-api-hxhuxsgwar.cn-beijing.fcapp.run';
 const Set<String> _legacyCloudHosts = {};
 
 class ApiException implements Exception {
@@ -42,6 +43,30 @@ class WorkstationApi {
 
   bool get _remoteRelay => Uri.parse(server).path == '/api/mobile-relay';
   bool get _remoteCloud => Uri.parse(server).path == '/api/mobile-data';
+  bool get portfolioDemo => Uri.parse(server).host == domesticCloudHost;
+
+  Future<Map<String, dynamic>> enrollDemo() async {
+    if (!_remoteCloud || !portfolioDemo) {
+      throw const ApiException('体验账号只能在隔离环境中创建');
+    }
+    final random = Random.secure();
+    final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    final hex = bytes.map((value) => value.toRadixString(16).padLeft(2, '0')).join();
+    final installationId = '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
+        '${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
+    final value = await _direct(
+      'POST',
+      Uri.parse(server).replace(queryParameters: const {'action': 'enroll-editor'}),
+      body: {'installationId': installationId, 'name': '作品集手机体验版'},
+    );
+    token = value['token']?.toString();
+    if (token == null || token!.isEmpty) {
+      throw const ApiException('体验服务没有返回临时令牌');
+    }
+    return value;
+  }
 
   static String normalizeServer(String raw) {
     var value = raw.trim();
@@ -663,6 +688,13 @@ class WorkstationApi {
         ? response.statusCode >= 200 && response.statusCode < 300
         : accept.contains(response.statusCode);
     if (!accepted) {
+      if (response.statusCode == 423 && value['code'] == 'demo_closed') {
+        throw const ApiException(
+          '体验版修改权限已结束',
+          statusCode: 423,
+          code: 'demo_closed',
+        );
+      }
       throw ApiException(
         value['error']?.toString() ?? '请求失败（${response.statusCode}）',
         statusCode: response.statusCode,

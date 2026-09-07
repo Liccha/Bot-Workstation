@@ -22,16 +22,16 @@ public final class BotPaths {
         this.desktop = desktop;
         this.workstation = workstation;
         this.songBot = component("botstation.songbot.home", "BOT_WORKSTATION_SONGBOT",
-            workstation.resolve("components").resolve("SongBot"), desktop.resolve("SongBot"));
+            workstation.resolve("components").resolve("SongBot"), workstation.resolve("components").resolve("SongBot"));
         this.mczMaker = preferredDirectory("botstation.mcz.home", "BOT_WORKSTATION_MCZ",
-            workstation.resolve("components").resolve("MczMaker"), desktop.resolve("MczMaker"));
+            workstation.resolve("components").resolve("MczMaker"), workstation.resolve("components").resolve("MczMaker"));
         this.napCat = component("botstation.napcat.home", "BOT_WORKSTATION_NAPCAT",
-            workstation.resolve("components").resolve("NapCat.Shell"), desktop.resolve("NapCat.Shell"));
+            workstation.resolve("components").resolve("NapCat.Shell"), workstation.resolve("components").resolve("NapCat.Shell"));
         this.stableGrabber = componentFile("botstation.stable.exe", "BOT_WORKSTATION_STABLE_EXE",
             workstation.resolve("components").resolve("rm_stable_info").resolve("rm_stable_info.exe"),
-            desktop.resolve("rm_stable_info").resolve("rm_stable_info.exe"));
+            workstation.resolve("components").resolve("rm_stable_info").resolve("rm_stable_info.exe"));
         this.stableWorkbook = componentFile("botstation.stable.workbook", "BOT_WORKSTATION_STABLE_WORKBOOK",
-            workstation.resolve("data").resolve("stable_info.xlsx"), desktop.resolve("stable_info.xlsx"));
+            workstation.resolve("data").resolve("stable_info.xlsx"), workstation.resolve("data").resolve("stable_info.xlsx"));
         this.stableCsv = songBot.resolve("stable_info.csv");
         this.songDatabase = songBot.resolve("song_data.db");
         this.editorUrl = "https://github.com/Liccha/Bot-Workstation";
@@ -50,7 +50,7 @@ public final class BotPaths {
                 workstation = current;
             }
         }
-        if (workstation == null) workstation = desktop.resolve("Bot工作站");
+        if (workstation == null) workstation = desktop.resolve("Bot工作站体验版");
         return new BotPaths(desktop, workstation);
     }
 
@@ -97,7 +97,7 @@ public final class BotPaths {
         String local = System.getenv("LOCALAPPDATA");
         Path root = local == null || local.isBlank()
             ? Paths.get(System.getProperty("user.home"), ".bot-workstation")
-            : Paths.get(local).resolve("Teacharm").resolve("BotWorkstation");
+            : Paths.get(local).resolve("Teacharm").resolve("BotWorkstationDemo");
         return root.toAbsolutePath().normalize();
     }
     public static boolean isWindows() { return File.separatorChar == '\\'; }
