@@ -52,7 +52,7 @@ void main() {
       throw StateError('unexpected request: ${request.url}');
     });
     final api = WorkstationApi(
-      'https://editor.teacharm.moe/api/mobile-data',
+      'https://portfolio.invalid/api/mobile-data',
       token: 'device-token',
       client: client,
     );

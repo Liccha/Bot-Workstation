@@ -30,7 +30,7 @@ var _visitDevice=(function(){
 		return value;
 	}catch(_){return ''}
 })();
-fetch(_trackUrl,{method:'POST',headers:_visitDevice?{'X-Visit-Device':_visitDevice}:{}}).catch(function(){});
+if(!window.PORTFOLIO_READ_ONLY)fetch(_trackUrl,{method:'POST',headers:_visitDevice?{'X-Visit-Device':_visitDevice}:{}}).catch(function(){});
 
 function toast(msg){var t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(function(){t.classList.remove('show')},2000)}
 function pad(n){return n<10?'0'+n:''+n}

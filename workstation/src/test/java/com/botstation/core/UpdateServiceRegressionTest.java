@@ -1,11 +1,14 @@
 package com.botstation.core;
 
+import java.net.URI;
 import java.nio.file.Path;
 import java.util.List;
 
 public final class UpdateServiceRegressionTest {
     private UpdateServiceRegressionTest() {}
     public static void main(String[] args) {
+        require("portfolio.invalid".equals(URI.create(UpdateService.MANIFEST_URL).getHost()),
+            "portfolio must not use the production update feed");
         require(UpdateService.compareVersions("1.1.1", "1.1.0") > 0, "patch version compare failed");
         require(UpdateService.compareVersions("1.2", "1.1.99") > 0, "minor version compare failed");
         require(UpdateService.compareVersions("1.1.0", "1.1") == 0, "normalized version compare failed");

@@ -4,6 +4,7 @@ const emergency = require('./_lib/emergency-lock');
 const mobileAuth = require('./_lib/mobile-auth');
 const editorAuth = require('./_lib/library-editor-auth');
 const library = require('./_lib/mobile-library');
+const showcase = require('./_lib/showcase-policy');
 
 function json(res, status, value) {
   res.statusCode = status;
@@ -34,6 +35,7 @@ function managedAssetKey(value) {
 }
 
 module.exports = async function handler(req, res) {
+  if (showcase.rejectMutation(req, res, json)) return;
   const action = String(query(req, 'action') || 'status');
   try {
     if (action === 'enroll-editor' && req.method === 'POST') {

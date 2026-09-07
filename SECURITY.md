@@ -2,7 +2,7 @@
 
 ## Supported scope
 
-This repository is a sanitized public source snapshot. Security reports should focus on authentication bypasses, unauthorized cloud writes, path traversal, token leakage, update integrity, and destructive data handling.
+This repository is a sanitized, read-only public portfolio snapshot. It is not a client distribution. Runtime defaults use non-routable endpoints, production update feeds are absent, and API mutations are denied unless an isolated test process explicitly enables test writes. Security reports should focus on authentication bypasses, unauthorized cloud writes, path traversal, token leakage, update integrity, and destructive data handling.
 
 ## Reporting
 

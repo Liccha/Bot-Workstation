@@ -5,11 +5,8 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 const String domesticCloudHost =
-    'songbotstic-api-cwpfgfkkpj.cn-beijing.fcapp.run';
-const Set<String> _legacyCloudHosts = {
-  'editor.teacharm.moe',
-  'bot-editor.vercel.app',
-};
+    'portfolio.invalid';
+const Set<String> _legacyCloudHosts = {};
 
 class ApiException implements Exception {
   const ApiException(this.message, {this.statusCode, this.code});

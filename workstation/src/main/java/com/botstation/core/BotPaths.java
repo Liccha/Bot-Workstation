@@ -34,7 +34,7 @@ public final class BotPaths {
             workstation.resolve("data").resolve("stable_info.xlsx"), desktop.resolve("stable_info.xlsx"));
         this.stableCsv = songBot.resolve("stable_info.csv");
         this.songDatabase = songBot.resolve("song_data.db");
-        this.editorUrl = "https://editor.teacharm.moe";
+        this.editorUrl = "https://github.com/Liccha/Bot-Workstation";
     }
 
     public static BotPaths detect() {

@@ -17,11 +17,11 @@ process.env.ANNOUNCEMENT_HIDDEN_GROUP_ID = 'unused-group';
 const visitHandler = require('../api/visit');
 const { readDocument } = require('../api/_lib/visits');
 
-function call({ ip = '203.0.113.10', device = 'visit-device-0123456789abcdef', origin = 'https://editor.teacharm.moe' } = {}) {
+function call({ ip = '203.0.113.10', device = 'visit-device-0123456789abcdef', origin = 'https://portfolio.invalid' } = {}) {
   return new Promise((resolve, reject) => {
     const req = {
       method: 'POST',
-      headers: { host: 'editor.teacharm.moe', origin, 'x-forwarded-for': ip, 'x-visit-device': device },
+      headers: { host: 'portfolio.invalid', origin, 'x-forwarded-for': ip, 'x-visit-device': device },
       socket: { remoteAddress: ip }
     };
     const res = {

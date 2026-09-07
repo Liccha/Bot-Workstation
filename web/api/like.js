@@ -1,5 +1,6 @@
 const likes = require('./_lib/likes');
 const { browserAllowed, json, safeError } = require('./_lib/public-api');
+const showcase = require('./_lib/showcase-policy');
 
 function body(req) {
   if (typeof req.body === 'string') return JSON.parse(req.body || '{}');
@@ -7,6 +8,7 @@ function body(req) {
 }
 
 module.exports = async function handler(req, res) {
+  if (showcase.rejectMutation(req, res, json)) return;
   if (req.method !== 'POST' && req.method !== 'DELETE') return json(res, 405, { error: 'method not allowed' });
   if (!browserAllowed(req)) return json(res, 403, { error: 'origin not allowed' });
   try {

@@ -7,7 +7,7 @@ const security = require('../api/_lib/security');
 function event(overrides = {}) {
   return {
     rawPath: '/api/mobile-data',
-    headers: { Origin: 'https://editor.teacharm.moe', 'Content-Type': 'application/json' },
+    headers: { Origin: 'https://portfolio.invalid', 'Content-Type': 'application/json' },
     queryParameters: { action: 'song' },
     body: '{"id":"1278"}',
     isBase64Encoded: false,
@@ -20,7 +20,7 @@ test('FC adapter preserves the existing Vercel handler contract and trusted sour
   let observed;
   const response = await handleEvent(event({
     headers: {
-      Origin: 'https://editor.teacharm.moe',
+      Origin: 'https://portfolio.invalid',
       Authorization: 'Device redacted',
       'Content-Type': 'application/json',
       'X-Fc-Source-Ip': '198.51.100.44',
@@ -45,7 +45,7 @@ test('FC adapter preserves the existing Vercel handler contract and trusted sour
 
 test('FC adapter permits only approved Editor origins during preflight', async () => {
   const allowed = await handleEvent(event({
-    headers: { Origin: 'https://editor.teacharm.moe' },
+    headers: { Origin: 'https://portfolio.invalid' },
     requestContext: { http: { method: 'OPTIONS', path: '/api/mobile-data', sourceIp: '203.0.113.8' } },
   }));
   assert.equal(allowed.statusCode, 204);

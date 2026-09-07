@@ -11,8 +11,8 @@ test('public browser APIs accept only Editor origins in FC runtime', () => {
       method: 'POST',
       headers: { host: 'songbot.example.fcapp.run', origin },
     });
-    assert.equal(publicApi.browserAllowed(request('https://editor.teacharm.moe')), true);
-    assert.equal(publicApi.browserAllowed(request('https://bot-editor.vercel.app')), true);
+    assert.equal(publicApi.browserAllowed(request('https://portfolio.invalid')), true);
+    assert.equal(publicApi.browserAllowed(request('https://example.com')), false);
     assert.equal(publicApi.browserAllowed(request('https://evil.example')), false);
   } finally {
     if (previous == null) delete process.env.SONGBOT_RUNTIME;

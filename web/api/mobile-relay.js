@@ -4,6 +4,7 @@ const security = require('./_lib/security');
 const emergency = require('./_lib/emergency-lock');
 const repo = require('./_lib/repository');
 const mobileAuth = require('./_lib/mobile-auth');
+const showcase = require('./_lib/showcase-policy');
 
 const DEVICES_KEY = mobileAuth.DEVICES_KEY;
 const INBOX_PREFIX = 'mobile-relay/inboxes/';
@@ -199,6 +200,7 @@ function publicDevice(item) {
 }
 
 module.exports = async function handler(req, res) {
+  if (showcase.rejectMutation(req, res, json)) return;
   const action = String(query(req, 'action') || 'health');
   try {
     if (action === 'health' && req.method === 'GET') {

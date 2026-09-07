@@ -454,6 +454,10 @@ public class SongBot {
     private static final Map<Long, Integer> warnAlbum = new java.util.concurrent.ConcurrentHashMap<>();
     private static final Map<Long, Integer> warnAllAlbums = new java.util.concurrent.ConcurrentHashMap<>();
     public static void main(String[] args) throws IOException {
+        if (portfolioSnapshot()) {
+            System.err.println("SongBot 在公开作品集快照中不可运行。");
+            return;
+        }
         System.out.println("--------------------------------------------------");
         System.out.println("✅ V79 Final Bot 已启动 | 数据库: song_data.db");
         // Claim the management port before starting imports, background sync, or schedulers.
@@ -3105,14 +3109,11 @@ public class SongBot {
         return resolveChildFile(base, token);
     }
 
+    private static boolean portfolioSnapshot() { return true; }
+
     private static void addCors(HttpExchange exchange) {
         String origin = exchange.getRequestHeaders().getFirst("Origin");
-        if (origin != null && (origin.equals("https://liccha.tailae715d.ts.net")
-                || origin.equals("https://bot-editor.vercel.app")
-                || origin.equals("https://editor.teacharm.moe")
-                || origin.matches("https://bot-editor-[a-z0-9-]+-licchas-projects\\.vercel\\.app")
-                || origin.equals("https://liccha.github.io")
-                || origin.matches("https?://(localhost|127\\.0\\.0\\.1)(:\\d+)?"))) {
+        if (origin != null && origin.matches("https?://(localhost|127\\.0\\.0\\.1)(:\\d+)?")) {
             exchange.getResponseHeaders().add("Access-Control-Allow-Origin", origin);
             exchange.getResponseHeaders().add("Vary", "Origin");
         }

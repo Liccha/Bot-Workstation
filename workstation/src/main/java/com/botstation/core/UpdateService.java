@@ -20,7 +20,7 @@ import java.util.Locale;
 public final class UpdateService {
     public static final String CURRENT_VERSION = "1.1.30";
     public static final String MANIFEST_URL =
-        "https://assets.teacharm.moe/bot-workstation/releases/latest.json";
+        "https://portfolio.invalid/updates-disabled.json";
     private static final long MAX_MANIFEST_BYTES = 64 * 1024;
     private static final long MAX_INSTALLER_BYTES = 512L * 1024 * 1024;
     private final LogBus log;
@@ -164,9 +164,9 @@ public final class UpdateService {
         URI uri;
         try { uri = URI.create(value); }
         catch (IllegalArgumentException error) { throw new IOException("更新地址无效", error); }
-        if (!"https".equalsIgnoreCase(uri.getScheme()) || !"assets.teacharm.moe".equalsIgnoreCase(uri.getHost())
+        if (!"https".equalsIgnoreCase(uri.getScheme()) || !"portfolio.invalid".equalsIgnoreCase(uri.getHost())
             || uri.getRawUserInfo() != null || uri.getPort() != -1
-            || !uri.getPath().startsWith("/bot-workstation/releases/")) {
+            || !uri.getPath().startsWith("/disabled/")) {
             throw new IOException("更新地址不在受信任的发布域名内");
         }
     }

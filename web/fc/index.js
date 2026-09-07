@@ -10,8 +10,7 @@ const ROUTES = {
 };
 
 const ALLOWED_ORIGINS = new Set([
-  'https://editor.teacharm.moe',
-  'https://bot-editor.vercel.app',
+  'https://portfolio.invalid',
 ]);
 
 function lowerCaseHeaders(input) {
@@ -26,7 +25,6 @@ function allowedOrigin(value) {
   try {
     const origin = new URL(String(value || '')).origin;
     if (ALLOWED_ORIGINS.has(origin)) return origin;
-    if (/^https:\/\/bot-editor-[a-z0-9-]+-licchas-projects\.vercel\.app$/.test(origin)) return origin;
   } catch (_) {}
   return '';
 }

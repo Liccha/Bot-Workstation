@@ -214,7 +214,7 @@ function doUnlike(id){
   .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}).then(function(d){_LIKES[id]=Number(d.count)||0;if(d.liked)_LIKED.add(id);else _LIKED.delete(id);_saveLikes();updateHeartUI(id)}).catch(function(){_enqueue('unlike',id);_scheduleLikeReplay()});
 }
 // 切换：点一下 +1，再点一下 -1（无需检测双击）
-function heartToggle(id){ if(_LIKED.has(id)) doUnlike(id); else doLike(id); }
+function heartToggle(id){ if(window.PORTFOLIO_READ_ONLY)return;if(_LIKED.has(id)) doUnlike(id); else doLike(id); }
 window.heartToggle=heartToggle;
 window.addEventListener('online',_replayQueue);
 
@@ -479,7 +479,7 @@ function _deviceId(){try{var k='_sbDev',v=localStorage.getItem(k);if(!v){v=(wind
 function adminHeaders(extra){var h=extra||{};h['X-Admin-Device']=_deviceId();return h}
 function _applyAdminUI(){var b=document.querySelector('[data-tab="announce"]'),w=document.getElementById('weOpenBtn');if(b)b.style.display=_isAdmin?'':'none';if(w)w.style.display=_isAdmin?'inline-block':'none'}
 function _legacyAdminCheck(){return fetch(API_BASE+'/api/admin/check?d='+encodeURIComponent(_deviceId())).then(function(r){return r.json()})}
-function _checkAdmin(){fetch(API_BASE+'/api/announcement-cloud?action=admin-check',{headers:adminHeaders()}).then(function(r){if(!r.ok)throw new Error('cloud unavailable');return r.json()}).then(function(d){if(d&&d.admin)return d;if(window.ANNOUNCEMENT_CLOUD_REQUIRED)return d;return _legacyAdminCheck()}).then(function(d){_isAdmin=!!(d&&d.admin);_applyAdminUI();if(_isAdmin)window.dispatchEvent(new Event('announcement-admin-ready'))}).catch(function(){if(window.ANNOUNCEMENT_CLOUD_REQUIRED){_isAdmin=false;_applyAdminUI();return}_legacyAdminCheck().then(function(d){_isAdmin=!!(d&&d.admin);_applyAdminUI()}).catch(function(){_isAdmin=false;_applyAdminUI()})})}
+function _checkAdmin(){if(window.PORTFOLIO_READ_ONLY){_isAdmin=false;_applyAdminUI();return}fetch(API_BASE+'/api/announcement-cloud?action=admin-check',{headers:adminHeaders()}).then(function(r){if(!r.ok)throw new Error('cloud unavailable');return r.json()}).then(function(d){if(d&&d.admin)return d;if(window.ANNOUNCEMENT_CLOUD_REQUIRED)return d;return _legacyAdminCheck()}).then(function(d){_isAdmin=!!(d&&d.admin);_applyAdminUI();if(_isAdmin)window.dispatchEvent(new Event('announcement-admin-ready'))}).catch(function(){if(window.ANNOUNCEMENT_CLOUD_REQUIRED){_isAdmin=false;_applyAdminUI();return}_legacyAdminCheck().then(function(d){_isAdmin=!!(d&&d.admin);_applyAdminUI()}).catch(function(){_isAdmin=false;_applyAdminUI()})})}
 document.getElementById("libSearch").addEventListener("keydown",function(e){
  if(e.key!=='Enter')return;
  var v=this.value.trim();if(!/^[a-zA-Z]{6,40}$/.test(v))return; // 仅疑似暗号才发后端，普通搜索(含空格/中文/数字)不外传

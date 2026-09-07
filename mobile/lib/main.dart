@@ -11,9 +11,35 @@ import 'widgets/app_background.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (_portfolioSnapshot()) {
+    runApp(const _PortfolioNotice());
+    return;
+  }
   final controller = AppController(SessionStore());
   runApp(BotWorkstationApp(controller: controller));
   unawaited(controller.restore());
+}
+
+bool _portfolioSnapshot() => true;
+
+class _PortfolioNotice extends StatelessWidget {
+  const _PortfolioNotice();
+
+  @override
+  Widget build(BuildContext context) => const MaterialApp(
+    debugShowCheckedModeBanner: false,
+    home: Scaffold(
+      body: Center(
+        child: Padding(
+          padding: EdgeInsets.all(32),
+          child: Text(
+            'Bot 工作站公开仓库仅用于只读作品集展示，正式客户端功能未开放。',
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 class BotWorkstationApp extends StatefulWidget {

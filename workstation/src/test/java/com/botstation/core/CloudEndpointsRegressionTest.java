@@ -8,11 +8,11 @@ public final class CloudEndpointsRegressionTest {
     public static void main(String[] args) {
         assertEquals(CloudEndpoints.HOST, CloudEndpoints.MOBILE_DATA.getHost());
         assertEquals("/api/mobile-data", CloudEndpoints.MOBILE_DATA.getPath());
-        assertTrue(CloudEndpoints.isProductionHost(CloudEndpoints.HOST));
+        assertTrue(!CloudEndpoints.isProductionHost(CloudEndpoints.HOST));
         assertTrue(!CloudEndpoints.isProductionHost("attacker.fcapp.run"));
         URI migrated = CloudEndpoints.migrateLegacy(
-            URI.create("https://editor.teacharm.moe/api/announcement-cloud"));
-        assertEquals(CloudEndpoints.HOST, migrated.getHost());
+            URI.create("https://example.invalid/api/announcement-cloud"));
+        assertEquals("example.invalid", migrated.getHost());
         assertEquals("/api/announcement-cloud", migrated.getPath());
         System.out.println("CloudEndpointsRegressionTest passed");
     }

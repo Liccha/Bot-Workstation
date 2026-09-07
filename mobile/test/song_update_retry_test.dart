@@ -17,7 +17,7 @@ void main() {
         var posts = 0;
         var exactGets = 0;
         final api = WorkstationApi(
-          'https://editor.teacharm.moe/api/mobile-data',
+          'https://portfolio.invalid/api/mobile-data',
           token: 'device-id.device-secret',
           client: MockClient((request) async {
             final action = request.url.queryParameters['action'];
@@ -57,7 +57,7 @@ void main() {
           var exactGets = 0;
           var fallbackGets = 0;
           final api = WorkstationApi(
-            'https://editor.teacharm.moe/api/mobile-data',
+            'https://portfolio.invalid/api/mobile-data',
             token: 'device-id.device-secret',
             client: MockClient((request) async {
               final action = request.url.queryParameters['action'];
@@ -107,7 +107,7 @@ void main() {
         var posts = 0;
         var exactGets = 0;
         final api = WorkstationApi(
-          'https://editor.teacharm.moe/api/mobile-data',
+          'https://portfolio.invalid/api/mobile-data',
           token: 'device-id.device-secret',
           client: MockClient((request) async {
             final action = request.url.queryParameters['action'];
@@ -137,7 +137,7 @@ void main() {
     test('does not retry write_busy more than once', () async {
       var posts = 0;
       final api = WorkstationApi(
-        'https://editor.teacharm.moe/api/mobile-data',
+        'https://portfolio.invalid/api/mobile-data',
         token: 'device-id.device-secret',
         client: MockClient((request) async {
           final action = request.url.queryParameters['action'];
@@ -171,7 +171,7 @@ void main() {
       var posts = 0;
       var gets = 0;
       final api = WorkstationApi(
-        'https://editor.teacharm.moe/api/mobile-data',
+        'https://portfolio.invalid/api/mobile-data',
         token: 'device-id.device-secret',
         client: MockClient((request) async {
           if (request.method == 'POST') {
@@ -201,7 +201,7 @@ void main() {
       var posts = 0;
       var exactGets = 0;
       final api = WorkstationApi(
-        'https://editor.teacharm.moe/api/mobile-data',
+        'https://portfolio.invalid/api/mobile-data',
         token: 'device-id.device-secret',
         client: MockClient((request) async {
           final action = request.url.queryParameters['action'];
@@ -229,7 +229,7 @@ void main() {
 
     test('does not mistake a failed delete read-back for HTTP 404', () async {
       final api = WorkstationApi(
-        'https://editor.teacharm.moe/api/mobile-data',
+        'https://portfolio.invalid/api/mobile-data',
         token: 'device-id.device-secret',
         client: MockClient((request) async {
           final action = request.url.queryParameters['action'];
@@ -269,7 +269,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     Map<String, dynamic>? submitted;
     final api = WorkstationApi(
-      'https://editor.teacharm.moe/api/mobile-data',
+      'https://portfolio.invalid/api/mobile-data',
       token: 'device-id.device-secret',
       client: MockClient((request) async {
         final action = request.url.queryParameters['action'];

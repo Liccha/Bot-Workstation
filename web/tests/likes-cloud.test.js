@@ -19,7 +19,7 @@ const likeHandler = require('../api/like');
 const { getStore } = require('../api/_lib/storage');
 const { CURRENT_KEY } = require('../api/_lib/likes');
 
-function call(handler, method, { ip = '203.0.113.10', device, body, host = 'editor.teacharm.moe', origin = 'https://editor.teacharm.moe' } = {}) {
+function call(handler, method, { ip = '203.0.113.10', device, body, host = 'portfolio.invalid', origin = 'https://portfolio.invalid' } = {}) {
   return new Promise((resolve, reject) => {
     const headers = { host, origin, 'x-forwarded-for': ip };
     if (device) headers['x-like-device'] = device;

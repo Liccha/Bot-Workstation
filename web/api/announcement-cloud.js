@@ -5,6 +5,7 @@ const repo = require('./_lib/repository');
 const websitePosts = require('./_lib/website-posts');
 const security = require('./_lib/security');
 const emergency = require('./_lib/emergency-lock');
+const showcase = require('./_lib/showcase-policy');
 const grantWindows = new Map();
 
 function json(res, status, value, headers = {}) {
@@ -31,16 +32,13 @@ function browserAllowed(req, cfg) {
   if (cfg.local) return true;
   const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(':')[0].toLowerCase();
   const fcRuntime = process.env.SONGBOT_RUNTIME === 'aliyun-fc';
-  const allowedHost = fcRuntime || host === 'editor.teacharm.moe' || host === 'bot-editor.vercel.app' || /^bot-editor-[a-z0-9-]+-licchas-projects\.vercel\.app$/.test(host);
+  const allowedHost = fcRuntime || host === 'portfolio.invalid' || host === 'localhost' || host === '127.0.0.1';
   if (!allowedHost) return false;
   const origin = String(req.headers.origin || '').toLowerCase();
   if (!origin) return req.method === 'GET' || String(req.headers['sec-fetch-site'] || '') === 'same-origin';
   try {
     const originHost = new URL(origin).hostname.toLowerCase();
-    return fcRuntime
-      ? originHost === 'editor.teacharm.moe' || originHost === 'bot-editor.vercel.app'
-        || /^bot-editor-[a-z0-9-]+-licchas-projects\.vercel\.app$/.test(originHost)
-      : originHost === host;
+    return fcRuntime ? originHost === 'portfolio.invalid' : originHost === host;
   } catch (_) { return false; }
 }
 function sessionCookie(token) {
@@ -57,6 +55,7 @@ function sanitizeName(name) {
 }
 
 module.exports = async function handler(req, res) {
+  if (showcase.rejectMutation(req, res, json)) return;
   const action = String(query(req, 'action') || 'health');
   try {
     const cfg = config();

@@ -115,6 +115,10 @@ public class MczTool extends JFrame {
     }
 
     public static void main(String[] args) {
+        if (portfolioSnapshot()) {
+            System.err.println("MczMaker 在公开作品集快照中不可运行。");
+            return;
+        }
         detectFFmpeg();
         try {
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
@@ -133,6 +137,8 @@ public class MczTool extends JFrame {
         }
         SwingUtilities.invokeLater(() -> new MczTool().setVisible(true));
     }
+
+    private static boolean portfolioSnapshot() { return true; }
 
     private static void detectFFmpeg() {
         File localFFmpeg = new File("ffmpeg.exe");

@@ -40,7 +40,7 @@ def properties(path: Path) -> dict[str, str]:
 
 def endpoint(value: str) -> str:
     parsed = urllib.parse.urlparse(value)
-    if parsed.scheme != "https" or parsed.hostname not in {"editor.teacharm.moe", "bot-editor.vercel.app"}:
+    if parsed.scheme != "https" or parsed.hostname != "portfolio.invalid":
         raise RuntimeError("cloud API origin is not trusted")
     return urllib.parse.urlunparse(("https", parsed.netloc, "/api/mobile-data", "", "", ""))
 
@@ -198,4 +198,3 @@ if __name__ == "__main__":
     except Exception as error:
         print(f"mobile cloud sync skipped: {error}", file=sys.stderr)
         raise SystemExit(1)
-

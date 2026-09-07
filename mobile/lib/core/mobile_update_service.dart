@@ -26,7 +26,7 @@ class MobileRelease {
 
 class MobileUpdateService {
   static final Uri _manifest = Uri.parse(
-    'https://assets.teacharm.moe/bot-workstation/mobile/latest.json',
+    'https://portfolio.invalid/updates-disabled.json',
   );
 
   Future<MobileRelease?> check() async {
@@ -44,8 +44,8 @@ class MobileUpdateService {
     if (!RegExp(r'^\d+(?:\.\d+){1,3}$').hasMatch(version) ||
         url == null ||
         url.scheme != 'https' ||
-        url.host != 'assets.teacharm.moe' ||
-        !url.path.startsWith('/bot-workstation/mobile/') ||
+        url.host != 'portfolio.invalid' ||
+        !url.path.startsWith('/disabled/') ||
         !url.path.toLowerCase().endsWith('.apk') ||
         !RegExp(r'^[0-9a-f]{64}$').hasMatch(sha256) ||
         size < 1 ||
