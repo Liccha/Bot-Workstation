@@ -39,7 +39,7 @@ dependencies:
   # Android 36 toolchain and a wider range of existing devices.
   flutter_secure_storage: 9.2.4
   package_info_plus: 9.0.1
-  file_picker: ^10.3.10
+  file_picker: ^11.0.3
   path_provider: ^2.1.5
   crypto: ^3.0.7
   convert: ^3.1.2
